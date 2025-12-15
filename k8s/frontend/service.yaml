@@ -1,0 +1,49 @@
+# ============================================
+# Frontend Service для Orchestra
+# ============================================
+#
+# ЩО ЦЕЙ ФАЙЛ РОБИТЬ:
+# - Створює доступ до frontend Pod'ів
+# - Балансує трафік між frontend replicas
+#
+# ============================================
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: orchestra-frontend
+  namespace: default
+
+  labels:
+    app: orchestra
+    component: frontend
+
+spec:
+  type: ClusterIP
+
+  selector:
+    app: orchestra
+    component: frontend
+
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 5173
+
+  sessionAffinity: None
+
+# ============================================
+# ПРИМІТКА
+# ============================================
+#
+# Frontend Service зазвичай не доступний напряму ззовні.
+# Замість цього використовують Ingress для:
+# - HTTP/HTTPS routing
+# - SSL termination
+# - Path-based routing
+#
+# Див. ingress.yaml для зовнішнього доступу
+#
+# ============================================

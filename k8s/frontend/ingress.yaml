@@ -1,0 +1,383 @@
+# ============================================
+# Ingress для Orchestra
+# ============================================
+#
+# ЩО ТАКЕ INGRESS:
+# - HTTP/HTTPS маршрутизація до сервісів
+# - SSL/TLS termination
+# - Path-based або Host-based routing
+# - Load balancing на рівні L7 (HTTP)
+#
+# ЩО ЦЕЙ ФАЙЛ РОБИТЬ:
+# - Надає зовнішній доступ до фронтенду та бекенду
+# - Маршрутизує / → frontend
+# - Маршрутизує /api → backend
+#
+# ВИМОГИ:
+# - Ingress Controller (nginx, traefik, etc.)
+#   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/cloud/deploy.yaml
+#
+# ============================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+
+# ----------------------------------------
+# METADATA
+# ----------------------------------------
+metadata:
+  name: orchestra-ingress
+  namespace: default
+
+  labels:
+    app: orchestra
+
+  # ========================================
+  # ANNOTATIONS - Налаштування Ingress Controller
+  # ========================================
+  annotations:
+    # Тип Ingress Controller
+    kubernetes.io/ingress.class: "nginx"
+
+    # SSL redirect
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+
+    # CORS
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+
+    # Rewrite target (для /api → /)
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+
+    # SSL/TLS (для HTTPS)
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+
+    # Rate limiting
+    # nginx.ingress.kubernetes.io/limit-rps: "10"
+
+    # Timeout
+    # nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+
+# ----------------------------------------
+# SPEC
+# ----------------------------------------
+spec:
+  # ========================================
+  # TLS/SSL Configuration (для HTTPS)
+  # ========================================
+  # tls:
+  # - hosts:
+  #   - orchestra.example.com
+  #   secretName: orchestra-tls  # Secret з SSL сертифікатом
+
+  # ========================================
+  # RULES - Правила маршрутизації
+  # ========================================
+  rules:
+  # ----------------------------------------
+  # HTTP Rules (без домену - default)
+  # ----------------------------------------
+  - http:
+      paths:
+      # Frontend (головна сторінка)
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: orchestra-frontend
+            port:
+              number: 80
+
+      # Backend API
+      - path: /api(/|$)(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: orchestra-backend
+            port:
+              number: 80
+
+  # ----------------------------------------
+  # Host-based routing (з доменом)
+  # ----------------------------------------
+  # - host: orchestra.example.com
+  #   http:
+  #     paths:
+  #     - path: /
+  #       pathType: Prefix
+  #       backend:
+  #         service:
+  #           name: orchestra-frontend
+  #           port:
+  #             number: 80
+  #
+  # - host: api.orchestra.example.com
+  #   http:
+  #     paths:
+  #     - path: /
+  #       pathType: Prefix
+  #       backend:
+  #         service:
+  #           name: orchestra-backend
+  #           port:
+  #             number: 80
+
+# ============================================
+# PATH TYPES
+# ============================================
+#
+# Kubernetes підтримує 3 типи path:
+#
+# 1. Exact - точний збіг
+#    path: /api/users
+#    ✓ /api/users
+#    ✗ /api/users/
+#    ✗ /api/users/123
+#
+# 2. Prefix - префікс
+#    path: /api
+#    ✓ /api
+#    ✓ /api/
+#    ✓ /api/users
+#    ✓ /api/users/123
+#
+# 3. ImplementationSpecific - залежить від Ingress Controller
+#    (для nginx - підтримує regex)
+#
+# ============================================
+
+# ============================================
+# ПРИКЛАДИ МАРШРУТИЗАЦІЇ
+# ============================================
+
+---
+# ----------------------------------------
+# Приклад 1: Проста маршрутизація
+# ----------------------------------------
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: simple-ingress
+# spec:
+#   rules:
+#   - http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: frontend
+#             port:
+#               number: 80
+
+---
+# ----------------------------------------
+# Приклад 2: Path-based routing
+# ----------------------------------------
+# / → frontend
+# /api → backend
+# /admin → admin-ui
+#
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: path-based-ingress
+# spec:
+#   rules:
+#   - http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: frontend
+#             port:
+#               number: 80
+#       - path: /api
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: backend
+#             port:
+#               number: 80
+#       - path: /admin
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: admin-ui
+#             port:
+#               number: 80
+
+---
+# ----------------------------------------
+# Приклад 3: Host-based routing
+# ----------------------------------------
+# www.example.com → frontend
+# api.example.com → backend
+#
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: host-based-ingress
+# spec:
+#   rules:
+#   - host: www.example.com
+#     http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: frontend
+#             port:
+#               number: 80
+#   - host: api.example.com
+#     http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: backend
+#             port:
+#               number: 80
+
+---
+# ----------------------------------------
+# Приклад 4: HTTPS з Let's Encrypt
+# ----------------------------------------
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: https-ingress
+#   annotations:
+#     cert-manager.io/cluster-issuer: "letsencrypt-prod"
+# spec:
+#   tls:
+#   - hosts:
+#     - example.com
+#     - www.example.com
+#     secretName: example-tls
+#   rules:
+#   - host: example.com
+#     http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: frontend
+#             port:
+#               number: 80
+
+# ============================================
+# NGINX INGRESS ANNOTATIONS
+# ============================================
+#
+# Популярні annotations:
+#
+# # Rewrite
+# nginx.ingress.kubernetes.io/rewrite-target: /
+#
+# # SSL Redirect
+# nginx.ingress.kubernetes.io/ssl-redirect: "true"
+#
+# # CORS
+# nginx.ingress.kubernetes.io/enable-cors: "true"
+# nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
+# nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+#
+# # Rate Limiting
+# nginx.ingress.kubernetes.io/limit-rps: "10"
+#
+# # Authentication
+# nginx.ingress.kubernetes.io/auth-type: basic
+# nginx.ingress.kubernetes.io/auth-secret: basic-auth
+#
+# # Timeouts
+# nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+# nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+# nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+#
+# # Body Size
+# nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+#
+# # WebSocket
+# nginx.ingress.kubernetes.io/websocket-services: "websocket-service"
+#
+# ============================================
+
+# ============================================
+# КОМАНДИ
+# ============================================
+#
+# 1. Встановити Nginx Ingress Controller:
+#    kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/cloud/deploy.yaml
+#
+# 2. Перевірити Ingress Controller:
+#    kubectl get pods -n ingress-nginx
+#
+# 3. Створити Ingress:
+#    kubectl apply -f ingress.yaml
+#
+# 4. Переглянути Ingress:
+#    kubectl get ingress
+#    kubectl get ing  # скорочення
+#    kubectl describe ingress orchestra-ingress
+#
+# 5. Переглянути IP/HOST:
+#    kubectl get ingress orchestra-ingress
+#    (дивись колонку ADDRESS)
+#
+# 6. Тест:
+#    curl http://<INGRESS-IP>/
+#    curl http://<INGRESS-IP>/api/congratulation
+#
+# 7. Port forwarding для локального тесту:
+#    kubectl port-forward -n ingress-nginx service/ingress-nginx-controller 8080:80
+#    curl http://localhost:8080/
+#
+# 8. Переглянути логи Ingress:
+#    kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx
+#
+# ============================================
+
+# ============================================
+# TROUBLESHOOTING
+# ============================================
+#
+# Ingress не працює?
+#
+# 1. Перевір чи встановлений Ingress Controller:
+#    kubectl get pods -n ingress-nginx
+#
+# 2. Перевір Ingress:
+#    kubectl describe ingress orchestra-ingress
+#    (шукай Events з помилками)
+#
+# 3. Перевір Service:
+#    kubectl get svc orchestra-frontend
+#    kubectl get svc orchestra-backend
+#
+# 4. Перевір чи Ingress має IP:
+#    kubectl get ingress
+#    (ADDRESS повинен бути заповнений)
+#
+# 5. Тест з Pod'а:
+#    kubectl run test --image=curlimages/curl -it --rm -- sh
+#    curl http://orchestra-frontend/
+#
+# 6. Переглянути логи Ingress Controller:
+#    kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx -f
+#
+# 7. 404 Not Found:
+#    - Перевір path в rules
+#    - Перевір чи Service існує
+#    - Перевір чи Pod'и running
+#
+# 8. 503 Service Unavailable:
+#    - Service не може знайти Pod'и
+#    - Перевір selector в Service
+#    - Перевір чи Pod'и healthy
+#
+# ============================================

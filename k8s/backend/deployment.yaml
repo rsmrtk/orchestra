@@ -1,0 +1,256 @@
+# ============================================
+# Backend Deployment для Orchestra
+# ============================================
+#
+# ЩО ЦЕЙ ФАЙЛ РОБИТЬ:
+# - Створює 3 копії (replicas) backend Pod'ів
+# - Кожен Pod запускає Go backend сервер
+# - Налаштовує health checks
+# - Обмежує ресурси (CPU, RAM)
+#
+# ============================================
+
+apiVersion: apps/v1
+kind: Deployment
+
+# ----------------------------------------
+# METADATA - Інформація про Deployment
+# ----------------------------------------
+metadata:
+  # Ім'я Deployment (має бути унікальне в namespace)
+  name: orchestra-backend
+
+  # Namespace (можна змінити на production, staging, etc.)
+  namespace: default
+
+  # Labels - для організації та пошуку
+  labels:
+    app: orchestra              # Назва застосунку
+    component: backend          # Компонент (backend/frontend)
+    version: v1                 # Версія
+    managed-by: kubectl         # Ким керується
+
+  # Annotations - додаткова інформація
+  annotations:
+    description: "Orchestra Backend API Server"
+    maintainer: "devops@example.com"
+    docs: "https://github.com/example/orchestra"
+
+# ----------------------------------------
+# SPEC - Що ми хочемо
+# ----------------------------------------
+spec:
+  # Кількість копій Pod'ів (для high availability)
+  # 1 = один Pod (dev)
+  # 3 = три Pod'и (production)
+  replicas: 3
+
+  # ----------------------------------------
+  # SELECTOR - Як знайти Pod'и якими керувати
+  # ----------------------------------------
+  # Deployment буде керувати Pod'ами з цими labels
+  selector:
+    matchLabels:
+      app: orchestra
+      component: backend
+
+  # ----------------------------------------
+  # TEMPLATE - Шаблон для створення Pod'ів
+  # ----------------------------------------
+  template:
+    # Metadata для Pod'ів
+    metadata:
+      labels:
+        # ВАЖЛИВО: Ці labels мають співпадати з selector!
+        app: orchestra
+        component: backend
+        version: v1
+
+    # Spec для Pod'ів
+    spec:
+      # ----------------------------------------
+      # CONTAINERS - Контейнери в Pod'і
+      # ----------------------------------------
+      containers:
+      - name: backend
+
+        # Docker образ
+        # ❗ НЕ використовуй :latest в production!
+        # ✓ Використовуй конкретну версію: backend:v1.0.0
+        image: orchestra-backend:v1
+
+        # Політика завантаження образу
+        # Always = завжди тягнути (для :latest)
+        # IfNotPresent = тільки якщо немає локально (для версій)
+        # Never = ніколи не тягнути
+        imagePullPolicy: IfNotPresent
+
+        # ----------------------------------------
+        # PORTS - Які порти відкрити
+        # ----------------------------------------
+        ports:
+        - name: http              # Ім'я порту (для зручності)
+          containerPort: 8383     # Порт контейнера
+          protocol: TCP           # Протокол (TCP/UDP)
+
+        # ----------------------------------------
+        # ENVIRONMENT - Змінні оточення
+        # ----------------------------------------
+        env:
+        # Звичайна змінна
+        - name: GIN_MODE
+          value: "release"
+
+        - name: PORT
+          value: "8383"
+
+        # Змінна з ConfigMap
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config    # Ім'я ConfigMap
+              key: LOG_LEVEL          # Ключ в ConfigMap
+              optional: true          # Чи обов'язкова (не падати якщо немає)
+
+        # Змінна з Secret
+        # - name: DB_PASSWORD
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: backend-secrets
+        #       key: DB_PASSWORD
+
+        # ----------------------------------------
+        # RESOURCES - Ліміти ресурсів
+        # ----------------------------------------
+        resources:
+          # REQUESTS - Мінімум ресурсів (для scheduler)
+          # K8s використовує це щоб вирішити на якій ноді запускати
+          requests:
+            memory: "128Mi"       # 128 мегабайт RAM
+            cpu: "100m"           # 0.1 CPU (100 millicores)
+
+          # LIMITS - Максимум ресурсів
+          # Pod не зможе використати більше
+          # Якщо перевищить memory → буде killed (OOMKilled)
+          # Якщо перевищить CPU → буде throttled (уповільнений)
+          limits:
+            memory: "256Mi"       # 256 мегабайт RAM
+            cpu: "200m"           # 0.2 CPU (200 millicores)
+
+        # ----------------------------------------
+        # LIVENESS PROBE - Чи живий Pod?
+        # ----------------------------------------
+        # Якщо перевірка падає → K8s перезапускає контейнер
+        livenessProbe:
+          httpGet:
+            path: /congratulation  # Endpoint для перевірки
+            port: 8383             # Порт
+            scheme: HTTP           # HTTP або HTTPS
+
+          initialDelaySeconds: 30  # Скільки чекати після старту
+          periodSeconds: 10        # Як часто перевіряти (секунди)
+          timeoutSeconds: 5        # Timeout для запиту
+          successThreshold: 1      # Скільки успішних для "healthy"
+          failureThreshold: 3      # Скільки невдалих для "unhealthy"
+
+        # ----------------------------------------
+        # READINESS PROBE - Чи готовий приймати трафік?
+        # ----------------------------------------
+        # Якщо перевірка падає → K8s не шле трафік на цей Pod
+        # (але не перезапускає!)
+        readinessProbe:
+          httpGet:
+            path: /congratulation
+            port: 8383
+
+          initialDelaySeconds: 5   # Менша затримка ніж liveness
+          periodSeconds: 5         # Частіше перевірка
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 2
+
+        # ----------------------------------------
+        # STARTUP PROBE - Для повільно стартуючих застосунків
+        # ----------------------------------------
+        # Поки startup не пройде - liveness не перевіряється
+        # startupProbe:
+        #   httpGet:
+        #     path: /health
+        #     port: 8383
+        #   failureThreshold: 30    # 30 * 10 = 300 секунд максимум
+        #   periodSeconds: 10
+
+      # ----------------------------------------
+      # POD-LEVEL налаштування
+      # ----------------------------------------
+
+      # Restart політика
+      # Always = завжди перезапускати (для Deployments)
+      # OnFailure = тільки якщо код виходу не 0
+      # Never = ніколи
+      restartPolicy: Always
+
+      # DNS політика
+      # ClusterFirst = використовувати DNS кластера
+      dnsPolicy: ClusterFirst
+
+      # Security context для всього Pod'а
+      # securityContext:
+      #   runAsNonRoot: true
+      #   runAsUser: 1000
+      #   fsGroup: 1000
+
+      # Tolerations - дозволяє Pod'ам запускатись на нодах з taints
+      # tolerations:
+      # - key: "key1"
+      #   operator: "Equal"
+      #   value: "value1"
+      #   effect: "NoSchedule"
+
+      # Node selector - на яких нодах запускати
+      # nodeSelector:
+      #   disktype: ssd
+      #   environment: production
+
+      # Affinity - складніші правила розміщення
+      # affinity:
+      #   podAntiAffinity:
+      #     preferredDuringSchedulingIgnoredDuringExecution:
+      #     - weight: 100
+      #       podAffinityTerm:
+      #         labelSelector:
+      #           matchExpressions:
+      #           - key: app
+      #             operator: In
+      #             values:
+      #             - orchestra
+      #         topologyKey: kubernetes.io/hostname
+
+# ============================================
+# ЯК ЗАСТОСУВАТИ:
+# ============================================
+#
+# 1. Створити/оновити Deployment:
+#    kubectl apply -f deployment.yaml
+#
+# 2. Переглянути Deployment:
+#    kubectl get deployment orchestra-backend
+#    kubectl describe deployment orchestra-backend
+#
+# 3. Переглянути Pod'и:
+#    kubectl get pods -l app=orchestra,component=backend
+#
+# 4. Переглянути логи:
+#    kubectl logs -l app=orchestra,component=backend
+#    kubectl logs -f <pod-name>  # Follow logs
+#
+# 5. Масштабувати:
+#    kubectl scale deployment orchestra-backend --replicas=5
+#
+# 6. Оновити образ:
+#    kubectl set image deployment/orchestra-backend backend=orchestra-backend:v2
+#
+# 7. Видалити:
+#    kubectl delete -f deployment.yaml
+#
+# ============================================
