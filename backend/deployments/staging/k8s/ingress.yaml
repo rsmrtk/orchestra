@@ -1,0 +1,383 @@
+# =============================================================================
+# INGRESS - HTTP/HTTPS маршрутизація ззовні в кластер
+# =============================================================================
+# Що це?
+# Ingress - це правила для HTTP/HTTPS трафіку ззовні кластера.
+# Він працює як reverse proxy/load balancer на вході в кластер.
+#
+# Навіщо?
+# - Один зовнішній IP для багатьох сервісів (замість LoadBalancer для кожного)
+# - Маршрутизація по host (api.example.com -> backend, app.example.com -> frontend)
+# - Маршрутизація по path (/api -> backend, /app -> frontend)
+# - SSL/TLS termination (HTTPS)
+# - URL rewriting
+# - Дешевше ніж LoadBalancer для кожного сервісу
+#
+# Як працює?
+# 1. Встановлюєш Ingress Controller (nginx, traefik, istio)
+# 2. Ingress Controller створює Load Balancer з одним зовнішнім IP
+# 3. Створюєш Ingress ресурси з правилами маршрутизації
+# 4. Ingress Controller читає ці правила і налаштовує reverse proxy
+# 5. Трафік: Інтернет -> LB -> Ingress Controller -> Service -> Pod
+#
+# Популярні Ingress Controllers:
+# - nginx-ingress (найпопулярніший)
+# - traefik (легкий, з dashboard)
+# - istio (service mesh з ingress)
+# - kong (API gateway)
+# - haproxy
+#
+# Встановлення nginx-ingress:
+# kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/cloud/deploy.yaml
+#
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1   # API версія для Ingress
+kind: Ingress
+metadata:
+  name: orchestra-backend-ingress
+  namespace: orchestra-staging
+  labels:
+    app: orchestra-backend
+    environment: staging
+  annotations:
+    # -------------------------------------------------------------------------
+    # NGINX Ingress Controller annotations
+    # -------------------------------------------------------------------------
+
+    # Вказати який Ingress Controller використовувати
+    kubernetes.io/ingress.class: "nginx"
+
+    # Або новий спосіб (через ingressClassName в spec)
+    # kubernetes.io/ingress.class: "nginx"
+
+    # SSL/TLS налаштування
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"  # Автоматичний SSL через cert-manager
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"   # Для production
+
+    # Redirect HTTP -> HTTPS
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+
+    # CORS налаштування
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://staging.orchestra.example.com, http://localhost:3000"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+
+    # Таймаути
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+
+    # Розмір тіла запиту
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+
+    # Rate limiting (обмеження кількості запитів)
+    nginx.ingress.kubernetes.io/rate-limit: "100"  # 100 запитів в секунду
+
+    # Whitelist IP (обмеження доступу по IP)
+    # nginx.ingress.kubernetes.io/whitelist-source-range: "192.168.1.0/24,10.0.0.0/8"
+
+    # Rewrite URL (змінити path)
+    # nginx.ingress.kubernetes.io/rewrite-target: /$2
+
+    # Custom headers
+    # nginx.ingress.kubernetes.io/configuration-snippet: |
+    #   more_set_headers "X-Custom-Header: value";
+
+spec:
+  # ---------------------------------------------------------------------------
+  # INGRESS CLASS - який Ingress Controller використовувати
+  # ---------------------------------------------------------------------------
+  ingressClassName: nginx          # Новий спосіб вказати клас (замість annotation)
+                                   # Можливі: nginx, traefik, istio
+
+  # ---------------------------------------------------------------------------
+  # TLS - налаштування SSL/HTTPS
+  # ---------------------------------------------------------------------------
+  tls:
+  - hosts:
+    - staging-api.orchestra.example.com    # Домен для SSL
+    secretName: orchestra-backend-tls      # Secret з SSL сертифікатом
+    # Створити Secret:
+    # kubectl create secret tls orchestra-backend-tls \
+    #   --cert=path/to/cert.crt \
+    #   --key=path/to/cert.key \
+    #   -n orchestra-staging
+    #
+    # Або через cert-manager (автоматично):
+    # cert-manager подивиться на annotation cert-manager.io/cluster-issuer
+    # і автоматично створить Secret з Let's Encrypt сертифікатом
+
+  # ---------------------------------------------------------------------------
+  # RULES - правила маршрутизації
+  # ---------------------------------------------------------------------------
+  rules:
+  # Правило #1: маршрутизація по host
+  - host: staging-api.orchestra.example.com  # Домен (DNS має вказувати на Ingress IP)
+    http:
+      paths:
+      # Path #1: всі запити /api/* йдуть на backend
+      - path: /api                 # Початок path
+        pathType: Prefix           # Prefix = /api, /api/users, /api/posts
+                                   # Exact = тільки /api
+                                   # ImplementationSpecific = залежить від Ingress Controller
+        backend:
+          service:
+            name: orchestra-backend-service  # Ім'я Service
+            port:
+              number: 80           # Порт Service
+
+      # Path #2: health check endpoint
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: orchestra-backend-service
+            port:
+              number: 80
+
+  # Правило #2: інший домен для тестування
+  - host: staging-test.orchestra.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: orchestra-backend-service
+            port:
+              number: 80
+
+  # Default backend (якщо не співпав жоден rule)
+  # defaultBackend:
+  #   service:
+  #     name: default-backend-service
+  #     port:
+  #       number: 80
+
+# =============================================================================
+# ПРИКЛАДИ РІЗНИХ КОНФІГУРАЦІЙ
+# =============================================================================
+
+---
+# ---------------------------------------------------------------------------
+# Простий Ingress - один домен, всі запити на один Service
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: simple-ingress
+  namespace: orchestra-staging
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+spec:
+  rules:
+  - host: api.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: orchestra-backend-service
+            port:
+              number: 80
+
+---
+# ---------------------------------------------------------------------------
+# Fanout Ingress - один домен, різні path -> різні сервіси
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fanout-ingress
+  namespace: orchestra-staging
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2  # Видалити /api з path
+spec:
+  rules:
+  - host: staging.example.com
+    http:
+      paths:
+      - path: /api(/|$)(.*)       # /api -> backend (regex для rewrite)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: backend-service
+            port:
+              number: 80
+      - path: /app(/|$)(.*)       # /app -> frontend
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: frontend-service
+            port:
+              number: 80
+      - path: /admin(/|$)(.*)     # /admin -> admin panel
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: admin-service
+            port:
+              number: 80
+
+---
+# ---------------------------------------------------------------------------
+# Name-based Virtual Hosting - різні домени -> різні сервіси
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: virtual-host-ingress
+  namespace: orchestra-staging
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - api.example.com
+    - app.example.com
+    - admin.example.com
+    secretName: multi-domain-tls  # Wildcard cert або багато доменів
+  rules:
+  - host: api.example.com         # API backend
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: backend-service
+            port:
+              number: 80
+  - host: app.example.com         # Frontend app
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-service
+            port:
+              number: 80
+  - host: admin.example.com       # Admin panel
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: admin-service
+            port:
+              number: 80
+
+# =============================================================================
+# CERT-MANAGER для автоматичного SSL
+# =============================================================================
+#
+# cert-manager автоматично отримує SSL сертифікати з Let's Encrypt
+#
+# 1. Встановити cert-manager:
+#    kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+#
+# 2. Створити ClusterIssuer:
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    # Let's Encrypt staging server (для тестування, має rate limits)
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: your-email@example.com         # Твій email для нотифікацій
+    privateKeySecretRef:
+      name: letsencrypt-staging-key       # Secret для приватного ключа
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    # Let's Encrypt production server (для продакшну)
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: your-email@example.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+
+# Після цього cert-manager буде автоматично створювати SSL сертифікати
+# для всіх Ingress з annotation: cert-manager.io/cluster-issuer
+
+# =============================================================================
+# ЯК ВИКОРИСТОВУВАТИ
+# =============================================================================
+#
+# 1. Встановити Ingress Controller (nginx):
+#    kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/cloud/deploy.yaml
+#
+# 2. Дізнатися External IP Ingress Controller:
+#    kubectl get svc -n ingress-nginx
+#    Шукай EXTERNAL-IP для ingress-nginx-controller
+#
+# 3. Налаштувати DNS:
+#    staging-api.orchestra.example.com -> <EXTERNAL-IP>
+#    Можна через A record або CNAME
+#
+# 4. (Опційно) Встановити cert-manager для автоматичного SSL:
+#    kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+#    kubectl apply -f ingress.yaml  (ClusterIssuer з файлу)
+#
+# 5. Створити Ingress:
+#    kubectl apply -f ingress.yaml
+#
+# 6. Перевірити статус:
+#    kubectl get ingress -n orchestra-staging
+#    kubectl describe ingress orchestra-backend-ingress -n orchestra-staging
+#
+# 7. Перевірити SSL сертифікат (якщо є cert-manager):
+#    kubectl get certificate -n orchestra-staging
+#    kubectl describe certificate orchestra-backend-tls -n orchestra-staging
+#
+# 8. Тестувати:
+#    curl https://staging-api.orchestra.example.com/api/congratulation
+#
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Проблема: 404 Not Found
+# - Перевір чи правильно вказаний host в Ingress
+# - Перевір чи DNS вказує на правильний IP
+# - Перевір path та pathType
+#
+# Проблема: 503 Service Unavailable
+# - Перевір чи Service існує: kubectl get svc
+# - Перевір чи є Endpoints: kubectl get endpoints
+# - Перевір чи Pod'и готові (readinessProbe)
+#
+# Проблема: SSL не працює
+# - Перевір чи cert-manager встановлений: kubectl get pods -n cert-manager
+# - Перевір чи ClusterIssuer готовий: kubectl get clusterissuer
+# - Перевір статус Certificate: kubectl describe certificate
+# - Подивись логи cert-manager: kubectl logs -n cert-manager deployment/cert-manager
+#
+# Проблема: CORS помилки
+# - Додай CORS annotations до Ingress
+# - Перевір чи Origin дозволений
+# - Перевір HTTP методи
+#
+# =============================================================================

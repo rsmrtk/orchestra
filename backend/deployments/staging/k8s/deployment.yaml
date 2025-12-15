@@ -1,0 +1,298 @@
+# =============================================================================
+# DEPLOYMENT - Управління Pod'ами та їх життєвим циклом
+# =============================================================================
+# Що це?
+# Deployment - це головний контролер для запуску додатків в Kubernetes.
+# Він створює Pod'и (контейнери), слідкує за їх станом, перезапускає при падінні.
+#
+# Навіщо?
+# - Автоматичне відновлення (якщо pod впав - Kubernetes перезапустить)
+# - Rolling updates (оновлення без downtime)
+# - Rollback (відкат до попередньої версії)
+# - Масштабування (збільшити/зменшити кількість реплік)
+# - Декларативний стан (описуєш що хочеш, K8s сам досягає цього стану)
+#
+# Як працює?
+# 1. Ти описуєш бажаний стан (скільки реплік, який образ, які ресурси)
+# 2. Kubernetes Controller Manager читає цей маніфест
+# 3. Створює ReplicaSet (проміжний об'єкт)
+# 4. ReplicaSet створює потрібну кількість Pod'ів
+# 5. Scheduler розміщує Pod'и на Node'ах кластера
+# 6. Kubelet на кожній Node запускає контейнери
+#
+# Команди:
+# kubectl apply -f deployment.yaml                    # Створити/оновити
+# kubectl get deployments -n orchestra-staging        # Подивитися список
+# kubectl describe deployment orchestra-backend -n orchestra-staging  # Деталі
+# kubectl rollout status deployment/orchestra-backend -n orchestra-staging # Статус розгортання
+# kubectl scale deployment orchestra-backend --replicas=5 -n orchestra-staging # Масштабувати
+# =============================================================================
+
+apiVersion: apps/v1                    # API група для Deployments (стабільна версія)
+kind: Deployment                       # Тип ресурсу
+metadata:
+  name: orchestra-backend              # Ім'я Deployment (має бути унікальним в namespace)
+  namespace: orchestra-staging         # В якому namespace створюємо
+  labels:                              # Мітки для самого Deployment (для організації)
+    app: orchestra-backend             # Мітка додатку
+    version: v1                        # Версія додатку
+    environment: staging               # Середовище
+spec:                                  # Специфікація бажаного стану
+  # -------------------------------------------------------------------------
+  # REPLICAS - скільки копій твого додатку запустити
+  # -------------------------------------------------------------------------
+  replicas: 2                          # Кількість Pod'ів (копій додатку)
+                                       # 1 = одна копія (якщо впаде - downtime)
+                                       # 2+ = high availability (одна впаде - інша працює)
+                                       # Для staging зазвичай 1-2, для production 3+
+
+  # -------------------------------------------------------------------------
+  # SELECTOR - як знайти Pod'и якими керує цей Deployment
+  # -------------------------------------------------------------------------
+  selector:                            # Селектор для пошуку Pod'ів
+    matchLabels:                       # Deployment керуватиме Pod'ами з цими мітками
+      app: orchestra-backend           # Має співпадати з labels в template нижче!
+
+  # -------------------------------------------------------------------------
+  # STRATEGY - стратегія оновлення Pod'ів
+  # -------------------------------------------------------------------------
+  strategy:
+    type: RollingUpdate                # Тип стратегії:
+                                       # RollingUpdate = поступово замінювати старі pod'и новими (zero downtime)
+                                       # Recreate = спочатку видалити всі, потім створити нові (є downtime)
+    rollingUpdate:
+      maxUnavailable: 1                # Скільки Pod'ів можуть бути недоступні під час оновлення
+                                       # 1 = мінімум 1 Pod завжди працює
+                                       # 0 = всі Pod'и мають працювати (потрібно більше ресурсів)
+      maxSurge: 1                      # Скільки додаткових Pod'ів можна створити під час оновлення
+                                       # 1 = може бути на 1 Pod більше ніж replicas
+                                       # 2 = може бути на 2 Pod'и більше
+
+  # -------------------------------------------------------------------------
+  # TEMPLATE - шаблон для створення Pod'ів
+  # -------------------------------------------------------------------------
+  template:                            # Опис Pod'ів які будуть створені
+    metadata:
+      labels:                          # Мітки для Pod'ів (МАЮТЬ співпадати з selector.matchLabels!)
+        app: orchestra-backend         # Основна мітка додатку
+        version: v1                    # Версія (можна використати для canary deployments)
+        environment: staging
+      annotations:                     # Анотації - додаткові метадані (не для селекторів)
+        prometheus.io/scrape: "true"   # Чи scrape-ити метрики Prometheus (якщо є)
+        prometheus.io/port: "8383"     # На якому порту метрики
+        prometheus.io/path: "/metrics" # Шлях до метрик
+    spec:                              # Специфікація Pod'а
+      # -----------------------------------------------------------------------
+      # CONTAINERS - список контейнерів в Pod'і
+      # -----------------------------------------------------------------------
+      containers:                      # Зазвичай 1 основний контейнер, можуть бути sidecar'и
+      - name: backend                  # Ім'я контейнера (має бути унікальним в Pod'і)
+        image: your-registry/orchestra-backend:staging  # Docker образ
+                                       # Формат: registry/repository:tag
+                                       # Приклади:
+                                       # - docker.io/myuser/app:v1.0.0
+                                       # - gcr.io/project-id/app:latest
+                                       # - ghcr.io/username/app:sha-abc123
+        imagePullPolicy: Always        # Коли завантажувати образ:
+                                       # Always = завжди тягнути (для :latest або тестування)
+                                       # IfNotPresent = тягнути якщо нема локально (для версій)
+                                       # Never = ніколи не тягнути (тільки локальні образи)
+
+        # ---------------------------------------------------------------------
+        # PORTS - які порти відкрити в контейнері
+        # ---------------------------------------------------------------------
+        ports:
+        - name: http                   # Ім'я порту (опційно, але зручно для Service)
+          containerPort: 8383          # Порт всередині контейнера (має співпадати з APP_PORT)
+          protocol: TCP                # Протокол (TCP або UDP)
+
+        # ---------------------------------------------------------------------
+        # ENVIRONMENT - змінні середовища
+        # ---------------------------------------------------------------------
+        env:
+        # Прямі значення
+        - name: ENV                    # Ім'я змінної
+          value: "staging"             # Значення
+
+        # З ConfigMap
+        - name: APP_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: orchestra-backend-config  # Ім'я ConfigMap
+              key: APP_PORT                   # Ключ в ConfigMap
+        - name: GIN_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: orchestra-backend-config
+              key: GIN_MODE
+        - name: ALLOWED_ORIGINS
+          valueFrom:
+            configMapKeyRef:
+              name: orchestra-backend-config
+              key: ALLOWED_ORIGINS
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: orchestra-backend-config
+              key: LOG_LEVEL
+
+        # З Secret
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: orchestra-backend-secret  # Ім'я Secret
+              key: API_KEY                    # Ключ в Secret
+
+        # Kubernetes metadata (автоматично підставляються)
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name        # Ім'я Pod'а
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace   # Namespace Pod'а
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP         # IP адреса Pod'а
+
+        # ---------------------------------------------------------------------
+        # RESOURCES - скільки CPU і пам'яті потрібно
+        # ---------------------------------------------------------------------
+        resources:
+          requests:                    # Мінімум який гарантується Pod'у
+            memory: "128Mi"            # 128 мегабайт RAM
+                                       # Mi = мебібайт (1024-based)
+                                       # M = мегабайт (1000-based)
+            cpu: "100m"                # 100 міллікор = 0.1 CPU core
+                                       # 1000m = 1 core
+                                       # 2000m = 2 cores
+          limits:                      # Максимум який може використати Pod
+            memory: "256Mi"            # Якщо перевищить - Pod буде killed (OOMKilled)
+            cpu: "200m"                # Якщо перевищить - CPU буде throttled
+
+        # Чому requests < limits?
+        # requests - для scheduler (на якій Node розмістити)
+        # limits - для захисту (щоб один Pod не з'їв всі ресурси)
+
+        # ---------------------------------------------------------------------
+        # PROBES - перевірки здоров'я контейнера
+        # ---------------------------------------------------------------------
+
+        # Liveness Probe - чи контейнер живий (чи не завис)
+        livenessProbe:                 # Якщо fail - Kubernetes перезапустить контейнер
+          httpGet:                     # Типи: httpGet, tcpSocket, exec
+            path: /congratulation      # HTTP ендпоінт для перевірки
+            port: 8383                 # Порт
+            scheme: HTTP               # HTTP або HTTPS
+          initialDelaySeconds: 30      # Скільки чекати після старту (щоб додаток встиг запуститись)
+          periodSeconds: 10            # Як часто перевіряти (кожні 10 секунд)
+          timeoutSeconds: 5            # Таймаут запиту (5 секунд)
+          successThreshold: 1          # Скільки разів має бути success (для відновлення)
+          failureThreshold: 3          # Скільки разів має бути fail (щоб вважати мертвим)
+
+        # Readiness Probe - чи контейнер готовий приймати трафік
+        readinessProbe:                # Якщо fail - Service не буде слати трафік на цей Pod
+          httpGet:
+            path: /congratulation      # Той самий ендпоінт (або окремий /health)
+            port: 8383
+          initialDelaySeconds: 5       # Менше ніж liveness (швидше почати приймати трафік)
+          periodSeconds: 5             # Частіше перевіряти
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+
+        # Startup Probe - для повільних додатків (опційно)
+        # startupProbe:                # Виконується ТІЛЬКИ при старті
+        #   httpGet:                   # Liveness/Readiness не працюють поки startup не пройде
+        #     path: /congratulation
+        #     port: 8383
+        #   initialDelaySeconds: 0
+        #   periodSeconds: 10
+        #   timeoutSeconds: 3
+        #   successThreshold: 1
+        #   failureThreshold: 30       # 30 * 10s = 5 хвилин на старт
+
+      # -----------------------------------------------------------------------
+      # POD SETTINGS - налаштування на рівні Pod'а
+      # -----------------------------------------------------------------------
+
+      # Restart Policy - коли перезапускати контейнер
+      restartPolicy: Always            # Always = завжди (для long-running додатків)
+                                       # OnFailure = тільки якщо crash (для jobs)
+                                       # Never = ніколи (для one-time tasks)
+
+      # DNS Policy - як резолвити DNS
+      dnsPolicy: ClusterFirst          # ClusterFirst = спочатку Kubernetes DNS, потім host
+                                       # Default = використовувати DNS з Node
+                                       # None = власна конфігурація
+
+      # Термінація - як зупиняти Pod
+      terminationGracePeriodSeconds: 30  # Скільки секунд дати на graceful shutdown
+                                         # 1. Kubernetes шле SIGTERM
+                                         # 2. Чекає terminationGracePeriodSeconds
+                                         # 3. Шле SIGKILL
+
+      # Image Pull Secrets - якщо registry приватний
+      # imagePullSecrets:
+      # - name: docker-registry-secret   # Створити через: kubectl create secret docker-registry
+
+      # Security Context - налаштування безпеки для Pod'а
+      # securityContext:
+      #   runAsNonRoot: true             # Запускати НЕ від root
+      #   runAsUser: 1000                # UID користувача
+      #   fsGroup: 2000                  # Group ID для файлів
+
+      # Affinity - де розміщувати Pod'и
+      # affinity:
+      #   podAntiAffinity:               # Не розміщувати Pod'и на одній Node
+      #     preferredDuringSchedulingIgnoredDuringExecution:
+      #     - weight: 100
+      #       podAffinityTerm:
+      #         labelSelector:
+      #           matchLabels:
+      #             app: orchestra-backend
+      #         topologyKey: kubernetes.io/hostname
+
+# =============================================================================
+# ЯК ВИКОРИСТОВУВАТИ
+# =============================================================================
+#
+# 1. Створити всі ресурси:
+#    kubectl apply -f namespace.yaml
+#    kubectl apply -f configmap.yaml
+#    kubectl apply -f secret.yaml
+#    kubectl apply -f deployment.yaml
+#
+# 2. Перевірити статус:
+#    kubectl get deployments -n orchestra-staging
+#    kubectl get pods -n orchestra-staging
+#    kubectl get rs -n orchestra-staging  # ReplicaSets
+#
+# 3. Подивитися деталі:
+#    kubectl describe deployment orchestra-backend -n orchestra-staging
+#    kubectl describe pod <pod-name> -n orchestra-staging
+#
+# 4. Подивитися логи:
+#    kubectl logs -f deployment/orchestra-backend -n orchestra-staging
+#    kubectl logs -f <pod-name> -n orchestra-staging
+#
+# 5. Оновити додаток (змінити image):
+#    kubectl set image deployment/orchestra-backend backend=new-image:tag -n orchestra-staging
+#    kubectl rollout status deployment/orchestra-backend -n orchestra-staging
+#
+# 6. Відкатити до попередньої версії:
+#    kubectl rollout undo deployment/orchestra-backend -n orchestra-staging
+#    kubectl rollout history deployment/orchestra-backend -n orchestra-staging
+#
+# 7. Масштабувати:
+#    kubectl scale deployment orchestra-backend --replicas=5 -n orchestra-staging
+#
+# 8. Перезапустити (без зміни конфігурації):
+#    kubectl rollout restart deployment/orchestra-backend -n orchestra-staging
+#
+# 9. Видалити:
+#    kubectl delete deployment orchestra-backend -n orchestra-staging
+#
+# =============================================================================

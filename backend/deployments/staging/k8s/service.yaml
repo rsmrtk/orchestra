@@ -1,0 +1,259 @@
+# =============================================================================
+# SERVICE - Мережевий доступ до Pod'ів
+# =============================================================================
+# Що це?
+# Service - це стабільна точка доступу до твоїх Pod'ів.
+# Pod'и можуть перезапускатися, міняти IP адреси, але Service завжди один.
+#
+# Навіщо?
+# - Стабільна IP адреса (Pod'и мають динамічні IP, Service - статичний)
+# - DNS ім'я (можна звертатися по імені: orchestra-backend-service:8080)
+# - Load balancing (розподіляє трафік між декількома Pod'ами)
+# - Service Discovery (інші додатки можуть знайти твій сервіс через DNS)
+#
+# Як працює?
+# 1. Service має селектор який шукає Pod'и по labels
+# 2. Kubernetes створює Endpoints - список IP адрес Pod'ів
+# 3. kube-proxy на кожній Node налаштовує iptables rules
+# 4. Трафік на Service IP розподіляється між Pod'ами
+# 5. Якщо Pod додається/видаляється - Endpoints автоматично оновлюються
+#
+# Типи Service:
+# - ClusterIP (default) - доступний тільки всередині кластера
+# - NodePort - доступний на кожній Node на статичному порту
+# - LoadBalancer - створює зовнішній Load Balancer (AWS ELB, GCP LB)
+# - ExternalName - CNAME alias для зовнішнього сервісу
+#
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestra-backend-service  # Ім'я Service (по ньому звертатися через DNS)
+  namespace: orchestra-staging
+  labels:
+    app: orchestra-backend
+    environment: staging
+  annotations:
+    # Додаткові метадані для Service
+    description: "Orchestra Backend API Service"
+spec:
+  # ---------------------------------------------------------------------------
+  # TYPE - тип Service
+  # ---------------------------------------------------------------------------
+  type: ClusterIP                  # ClusterIP = доступний тільки в кластері
+                                   # NodePort = доступний на Node IP:NodePort
+                                   # LoadBalancer = зовнішній LB (якщо cloud provider підтримує)
+
+  # Для інших типів:
+  # type: NodePort
+  # type: LoadBalancer
+
+  # ---------------------------------------------------------------------------
+  # SELECTOR - які Pod'и входять в цей Service
+  # ---------------------------------------------------------------------------
+  selector:                        # Селектор шукає Pod'и по labels
+    app: orchestra-backend         # ВАЖЛИВО: має співпадати з labels Pod'ів в Deployment!
+
+  # ---------------------------------------------------------------------------
+  # PORTS - які порти відкрити
+  # ---------------------------------------------------------------------------
+  ports:
+  - name: http                     # Ім'я порту (опційно, зручно якщо багато портів)
+    protocol: TCP                  # TCP або UDP
+    port: 80                       # Порт Service (на якому слухає Service)
+                                   # Інші Pod'и звертаються: http://orchestra-backend-service:80
+    targetPort: 8383               # Порт контейнера (куди перенаправляти)
+                                   # Або можна використати ім'я: targetPort: http (якщо в deployment вказано name)
+
+  # Можна відкрити багато портів:
+  # - name: https
+  #   protocol: TCP
+  #   port: 443
+  #   targetPort: 8443
+  # - name: metrics
+  #   protocol: TCP
+  #   port: 9090
+  #   targetPort: 9090
+
+  # ---------------------------------------------------------------------------
+  # SESSION AFFINITY - прив'язка сесії
+  # ---------------------------------------------------------------------------
+  sessionAffinity: None            # None = кожен запит може піти на інший Pod
+                                   # ClientIP = запити з одного IP йдуть на той самий Pod
+
+  # Якщо sessionAffinity: ClientIP
+  # sessionAffinityConfig:
+  #   clientIP:
+  #     timeoutSeconds: 10800      # 3 години прив'язки
+
+  # ---------------------------------------------------------------------------
+  # CLUSTER IP - статична IP адреса (опційно)
+  # ---------------------------------------------------------------------------
+  # clusterIP: 10.96.0.100         # Можна вказати конкретну IP (з діапазону кластера)
+                                   # Або:
+  # clusterIP: None                # Headless Service (для StatefulSet)
+
+# =============================================================================
+# ПРИКЛАДИ РІЗНИХ ТИПІВ SERVICE
+# =============================================================================
+
+---
+# ---------------------------------------------------------------------------
+# NodePort Service - доступ ззовні через Node IP
+# ---------------------------------------------------------------------------
+# Використання: для тестування, dev середовищ, коли нема LoadBalancer
+# Доступ: http://<node-ip>:<node-port>
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestra-backend-nodeport
+  namespace: orchestra-staging
+  labels:
+    app: orchestra-backend
+spec:
+  type: NodePort
+  selector:
+    app: orchestra-backend
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80                       # Service port (всередині кластера)
+    targetPort: 8383               # Container port
+    nodePort: 30080                # Node port (30000-32767)
+                                   # Якщо не вказати - Kubernetes призначить автоматично
+# Доступ:
+# - Всередині кластера: http://orchestra-backend-nodeport:80
+# - Ззовні: http://<будь-яка-node-ip>:30080
+
+---
+# ---------------------------------------------------------------------------
+# LoadBalancer Service - зовнішній Load Balancer
+# ---------------------------------------------------------------------------
+# Використання: production, коли потрібен публічний доступ
+# Cloud providers (AWS, GCP, Azure) створять зовнішній LB
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestra-backend-lb
+  namespace: orchestra-staging
+  labels:
+    app: orchestra-backend
+  annotations:
+    # AWS ELB annotations
+    # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+
+    # GCP annotations
+    # cloud.google.com/load-balancer-type: "Internal"
+
+    # Azure annotations
+    # service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app: orchestra-backend
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80                       # Порт Load Balancer'а
+    targetPort: 8383
+
+  # Обмеження доступу (IP whitelist)
+  # loadBalancerSourceRanges:
+  # - 192.168.1.0/24               # Тільки з цієї підмережі
+  # - 10.0.0.0/8
+
+# Після створення:
+# kubectl get svc orchestra-backend-lb -n orchestra-staging
+# Дивись EXTERNAL-IP - це адреса Load Balancer'а
+
+---
+# ---------------------------------------------------------------------------
+# Headless Service - без Load Balancing
+# ---------------------------------------------------------------------------
+# Використання: для StatefulSet, коли потрібен прямий доступ до кожного Pod'а
+# Kubernetes не створює clusterIP, натомість повертає IP всіх Pod'ів через DNS
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestra-backend-headless
+  namespace: orchestra-staging
+  labels:
+    app: orchestra-backend
+spec:
+  clusterIP: None                  # Headless = немає Cluster IP
+  selector:
+    app: orchestra-backend
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 8383
+
+# DNS повертає:
+# orchestra-backend-headless.orchestra-staging.svc.cluster.local -> всі IP Pod'ів
+# <pod-name>.orchestra-backend-headless.orchestra-staging.svc.cluster.local -> конкретний Pod
+
+# =============================================================================
+# DNS ІМЕНА в Kubernetes
+# =============================================================================
+#
+# Формат: <service-name>.<namespace>.svc.cluster.local
+#
+# Приклади:
+# - orchestra-backend-service (в тому самому namespace)
+# - orchestra-backend-service.orchestra-staging (з іншого namespace)
+# - orchestra-backend-service.orchestra-staging.svc (повне ім'я)
+# - orchestra-backend-service.orchestra-staging.svc.cluster.local (FQDN)
+#
+# =============================================================================
+# ЯК ТЕСТУВАТИ SERVICE
+# =============================================================================
+#
+# 1. Перевірити чи створився:
+#    kubectl get svc -n orchestra-staging
+#    kubectl describe svc orchestra-backend-service -n orchestra-staging
+#
+# 2. Перевірити Endpoints (IP адреси Pod'ів):
+#    kubectl get endpoints orchestra-backend-service -n orchestra-staging
+#    Якщо пусто - перевір selector!
+#
+# 3. Тестувати з іншого Pod'а в кластері:
+#    kubectl run -it --rm debug --image=alpine --restart=Never -n orchestra-staging -- sh
+#    apk add curl
+#    curl http://orchestra-backend-service:80/congratulation
+#
+# 4. Port-forward для локального тестування:
+#    kubectl port-forward svc/orchestra-backend-service 8080:80 -n orchestra-staging
+#    curl http://localhost:8080/congratulation
+#
+# 5. Перевірити DNS:
+#    kubectl run -it --rm debug --image=alpine --restart=Never -n orchestra-staging -- sh
+#    apk add bind-tools
+#    nslookup orchestra-backend-service
+#
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Проблема: Service не працює
+# - Перевір чи є Endpoints: kubectl get endpoints
+# - Перевір selector: має співпадати з labels Pod'ів
+# - Перевір чи Pod'и Running: kubectl get pods
+# - Перевір чи Pod'и готові: readinessProbe має пройти
+#
+# Проблема: Endpoints пусті
+# - Selector не співпадає з labels Pod'ів
+# - Pod'и не пройшли readinessProbe
+# - Pod'и в іншому namespace
+#
+# Проблема: Не можу зв'язатися з Service
+# - Перевір Network Policies
+# - Перевір порти (port vs targetPort)
+# - Перевір чи Pod слухає на правильному порті
+#
+# =============================================================================

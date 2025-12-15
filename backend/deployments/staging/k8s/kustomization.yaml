@@ -1,0 +1,385 @@
+# =============================================================================
+# KUSTOMIZATION - Управління Kubernetes ресурсами
+# =============================================================================
+# Що це?
+# Kustomize - це інструмент для кастомізації Kubernetes YAML файлів
+# без необхідності шаблонів (як Helm). Вбудований в kubectl з версії 1.14+.
+#
+# Навіщо?
+# - Організація та групування YAML файлів
+# - Різні конфігурації для різних середовищ (staging vs production)
+# - Не треба дублювати YAML файли
+# - Патчі та оверлеї для зміни конфігурації
+# - Генерація ConfigMap/Secret з файлів
+# - Додавання спільних labels, annotations, prefixes
+#
+# Як працює?
+# 1. Створюєш base конфігурацію (спільну для всіх середовищ)
+# 2. Створюєш overlays для кожного середовища (staging, production)
+# 3. Overlay патчить base конфігурацію
+# 4. kubectl apply -k path/to/overlay
+#
+# Структура:
+# deployments/
+# ├── base/                    # Базова конфігурація
+# │   ├── deployment.yaml
+# │   ├── service.yaml
+# │   └── kustomization.yaml
+# └── overlays/
+#     ├── staging/             # Staging overlay
+#     │   ├── kustomization.yaml
+#     │   └── patch.yaml
+#     └── production/          # Production overlay
+#         ├── kustomization.yaml
+#         └── patch.yaml
+#
+# =============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# -----------------------------------------------------------------------------
+# METADATA - інформація про kustomization
+# -----------------------------------------------------------------------------
+metadata:
+  name: orchestra-backend-staging
+  annotations:
+    # Додаткові метадані
+    version: "1.0.0"
+    environment: staging
+
+# -----------------------------------------------------------------------------
+# NAMESPACE - встановити namespace для всіх ресурсів
+# -----------------------------------------------------------------------------
+namespace: orchestra-staging         # Всі ресурси будуть в цьому namespace
+
+# -----------------------------------------------------------------------------
+# RESOURCES - список YAML файлів для включення
+# -----------------------------------------------------------------------------
+resources:
+  # Основні ресурси
+  - namespace.yaml                   # Namespace (створюється першим)
+  - configmap.yaml                   # Конфігурація
+  - secret.yaml                      # Секрети
+  - deployment.yaml                  # Deployment
+  - service.yaml                     # Service
+
+  # Додаткові ресурси (опційні)
+  - ingress.yaml                     # Ingress для HTTP/HTTPS доступу
+  - hpa.yaml                         # HorizontalPodAutoscaler
+  - pdb.yaml                         # PodDisruptionBudget
+  - network-policy.yaml              # NetworkPolicy для безпеки
+
+  # Можна додати remote ресурси:
+  # - https://raw.githubusercontent.com/example/repo/main/base.yaml
+
+# -----------------------------------------------------------------------------
+# COMMON LABELS - додати labels до всіх ресурсів
+# -----------------------------------------------------------------------------
+commonLabels:
+  app.kubernetes.io/name: orchestra-backend
+  app.kubernetes.io/instance: staging
+  app.kubernetes.io/version: "1.0.0"
+  app.kubernetes.io/component: backend
+  app.kubernetes.io/part-of: orchestra
+  app.kubernetes.io/managed-by: kustomize
+  environment: staging
+  team: backend
+
+# Ці labels додаються до:
+# - metadata.labels всіх ресурсів
+# - spec.selector.matchLabels для Deployment/Service
+# - spec.template.metadata.labels для Pod'ів
+
+# -----------------------------------------------------------------------------
+# COMMON ANNOTATIONS - додати annotations до всіх ресурсів
+# -----------------------------------------------------------------------------
+commonAnnotations:
+  organization: "orchestra"
+  managed-by: "kustomize"
+  documentation: "https://docs.orchestra.example.com"
+  contact: "backend-team@orchestra.example.com"
+
+# -----------------------------------------------------------------------------
+# NAME PREFIX/SUFFIX - додати префікс/суфікс до імен ресурсів
+# -----------------------------------------------------------------------------
+# namePrefix: staging-                # Додати префікс до всіх імен
+# nameSuffix: -v1                     # Додати суфікс до всіх імен
+
+# Результат:
+# orchestra-backend -> staging-orchestra-backend-v1
+
+# -----------------------------------------------------------------------------
+# IMAGES - замінити Docker образи (для CI/CD)
+# -----------------------------------------------------------------------------
+images:
+  - name: your-registry/orchestra-backend  # Старе ім'я образу
+    newName: ghcr.io/your-org/orchestra-backend  # Нове ім'я
+    newTag: staging-latest               # Новий tag
+    # Або digest:
+    # digest: sha256:abc123...
+
+# Використання в CI/CD:
+# kustomize edit set image your-registry/orchestra-backend=ghcr.io/your-org/orchestra-backend:v1.2.3
+
+# -----------------------------------------------------------------------------
+# CONFIG MAP GENERATOR - генерувати ConfigMap з файлів
+# -----------------------------------------------------------------------------
+# configMapGenerator:
+#   - name: app-config                   # Ім'я ConfigMap
+#     literals:                          # Key-value пари
+#       - APP_ENV=staging
+#       - LOG_LEVEL=debug
+#     files:                             # Файли як key-value
+#       - configs/app.properties         # key = filename, value = file content
+#       - database.yaml=configs/db.yaml  # key = database.yaml, value = file content
+#     envs:                              # .env файли
+#       - configs/.env
+#     options:
+#       labels:
+#         config-type: app
+#       annotations:
+#         note: "Generated by kustomize"
+#       disableNameSuffixHash: false    # Додавати hash до імені (для immutability)
+
+# -----------------------------------------------------------------------------
+# SECRET GENERATOR - генерувати Secret з файлів
+# -----------------------------------------------------------------------------
+# secretGenerator:
+#   - name: app-secrets
+#     literals:
+#       - API_KEY=secret-key-here
+#       - DB_PASSWORD=secret-password
+#     files:
+#       - tls.crt=certs/tls.crt
+#       - tls.key=certs/tls.key
+#     envs:
+#       - secrets/.env.secret
+#     type: Opaque                       # Або: kubernetes.io/tls, kubernetes.io/dockerconfigjson
+#     options:
+#       disableNameSuffixHash: false    # Рекомендовано false для secrets
+
+# -----------------------------------------------------------------------------
+# REPLACEMENTS - замінити значення полів (складні патчі)
+# -----------------------------------------------------------------------------
+# replacements:
+#   - source:
+#       kind: Service
+#       name: backend-service
+#       fieldPath: metadata.name
+#     targets:
+#       - select:
+#           kind: Ingress
+#         fieldPaths:
+#           - spec.rules.*.http.paths.*.backend.service.name
+
+# -----------------------------------------------------------------------------
+# PATCHES - модифікувати ресурси
+# -----------------------------------------------------------------------------
+# Patch #1: Strategic Merge Patch (найпростіший)
+# patches:
+#   - path: patch-deployment.yaml      # Файл з патчем
+#   - patch: |-                        # Inline патч
+#       apiVersion: apps/v1
+#       kind: Deployment
+#       metadata:
+#         name: orchestra-backend
+#       spec:
+#         replicas: 5                  # Змінити кількість реплік
+
+# Patch #2: JSON Patch (точні зміни)
+# patchesJson6902:
+#   - target:
+#       group: apps
+#       version: v1
+#       kind: Deployment
+#       name: orchestra-backend
+#     patch: |-
+#       - op: replace
+#         path: /spec/replicas
+#         value: 5
+#       - op: add
+#         path: /spec/template/spec/containers/0/env/-
+#         value:
+#           name: NEW_VAR
+#           value: "new-value"
+
+# Patch #3: Strategic Merge Patch (з selector)
+# patchesStrategicMerge:
+#   - patch-replicas.yaml
+#   - patch-resources.yaml
+
+# =============================================================================
+# ПРИКЛАДИ ДЛЯ РІЗНИХ USE CASES
+# =============================================================================
+
+---
+# ---------------------------------------------------------------------------
+# Base Kustomization (спільна конфігурація)
+# ---------------------------------------------------------------------------
+# Файл: deployments/base/kustomization.yaml
+# apiVersion: kustomize.config.k8s.io/v1beta1
+# kind: Kustomization
+#
+# resources:
+#   - deployment.yaml
+#   - service.yaml
+#   - configmap.yaml
+#
+# commonLabels:
+#   app: orchestra-backend
+
+---
+# ---------------------------------------------------------------------------
+# Staging Overlay
+# ---------------------------------------------------------------------------
+# Файл: deployments/overlays/staging/kustomization.yaml
+# apiVersion: kustomize.config.k8s.io/v1beta1
+# kind: Kustomization
+#
+# bases:
+#   - ../../base                       # Підключити base
+#
+# namespace: staging
+#
+# commonLabels:
+#   environment: staging
+#
+# images:
+#   - name: orchestra-backend
+#     newTag: staging-latest
+#
+# patchesStrategicMerge:
+#   - patch-staging.yaml               # Staging-specific зміни
+
+# Файл: deployments/overlays/staging/patch-staging.yaml
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: orchestra-backend
+# spec:
+#   replicas: 2                        # Staging = 2 репліки
+#   template:
+#     spec:
+#       containers:
+#       - name: backend
+#         resources:
+#           requests:
+#             memory: "128Mi"
+#             cpu: "100m"
+#           limits:
+#             memory: "256Mi"
+#             cpu: "200m"
+
+---
+# ---------------------------------------------------------------------------
+# Production Overlay
+# ---------------------------------------------------------------------------
+# Файл: deployments/overlays/production/kustomization.yaml
+# apiVersion: kustomize.config.k8s.io/v1beta1
+# kind: Kustomization
+#
+# bases:
+#   - ../../base
+#
+# namespace: production
+#
+# commonLabels:
+#   environment: production
+#
+# images:
+#   - name: orchestra-backend
+#     newTag: v1.2.3                   # Production = tagged version
+#
+# patchesStrategicMerge:
+#   - patch-production.yaml
+
+# Файл: deployments/overlays/production/patch-production.yaml
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: orchestra-backend
+# spec:
+#   replicas: 5                        # Production = 5 реплік
+#   template:
+#     spec:
+#       containers:
+#       - name: backend
+#         resources:
+#           requests:
+#             memory: "256Mi"
+#             cpu: "200m"
+#           limits:
+#             memory: "512Mi"
+#             cpu: "500m"
+
+# =============================================================================
+# ЯК ВИКОРИСТОВУВАТИ
+# =============================================================================
+#
+# 1. Перевірити чи kustomize доступний:
+#    kubectl version --short
+#    Kustomize має бути вбудований
+#
+# 2. Build (подивитися що згенерується, без apply):
+#    kubectl kustomize deployments/staging/k8s
+#    # Або
+#    kustomize build deployments/staging/k8s
+#
+# 3. Apply:
+#    kubectl apply -k deployments/staging/k8s
+#    # -k = kustomize (замість -f для файлів)
+#
+# 4. Diff (подивитися що зміниться):
+#    kubectl diff -k deployments/staging/k8s
+#
+# 5. Delete:
+#    kubectl delete -k deployments/staging/k8s
+#
+# 6. Dry-run:
+#    kubectl apply -k deployments/staging/k8s --dry-run=client -o yaml
+#
+# 7. Змінити image tag (для CI/CD):
+#    cd deployments/staging/k8s
+#    kustomize edit set image your-registry/orchestra-backend=ghcr.io/org/backend:v1.2.3
+#    kubectl apply -k .
+#
+# 8. Додати label:
+#    kustomize edit add label app:myapp
+#
+# 9. Додати annotation:
+#    kustomize edit add annotation note:"deployed by CI"
+#
+# =============================================================================
+# CI/CD INTEGRATION
+# =============================================================================
+#
+# GitHub Actions:
+# - name: Deploy to Kubernetes
+#   run: |
+#     cd deployments/staging/k8s
+#     kustomize edit set image \
+#       your-registry/orchestra-backend=ghcr.io/${{ github.repository }}:${{ github.sha }}
+#     kubectl apply -k .
+#
+# GitLab CI:
+# deploy:
+#   script:
+#     - cd deployments/staging/k8s
+#     - kustomize edit set image your-registry/orchestra-backend=${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA}
+#     - kubectl apply -k .
+#
+# =============================================================================
+# BEST PRACTICES
+# =============================================================================
+#
+# 1. Використовуй base + overlays структуру
+# 2. Не дублюй YAML - винеси спільне в base
+# 3. ConfigMap/Secret generator для immutability (з hash)
+# 4. Використовуй images field для зміни tags в CI/CD
+# 5. commonLabels для всіх ресурсів
+# 6. Версіонуй kustomization.yaml в Git
+# 7. Тестуй зміни через kubectl diff перед apply
+# 8. Документуй patches
+#
+# =============================================================================

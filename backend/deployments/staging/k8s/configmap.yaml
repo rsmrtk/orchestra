@@ -1,0 +1,60 @@
+# =============================================================================
+# CONFIGMAP - Конфігурація додатку
+# =============================================================================
+# Що це?
+# ConfigMap зберігає конфігураційні дані у вигляді key-value пар.
+# Це НЕ для секретів (паролів, токенів) - для них є Secret!
+#
+# Навіщо?
+# - Відокремити конфігурацію від коду
+# - Змінювати конфігурацію без пересборки Docker образу
+# - Різна конфігурація для різних середовищ (staging vs production)
+# - Можна монтувати як файли або змінні середовища
+#
+# Як працює?
+# 1. Створюєш ConfigMap з даними
+# 2. В Deployment вказуєш що Pod має використовувати цей ConfigMap
+# 3. Дані стають доступні як env змінні або файли в контейнері
+#
+# Як оновити?
+# kubectl apply -f configmap.yaml
+# Потім треба перезапустити pod'и: kubectl rollout restart deployment/orchestra-backend
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestra-backend-config      # Ім'я ConfigMap
+  namespace: orchestra-staging        # В якому namespace створюємо
+  labels:
+    app: orchestra-backend
+    environment: staging
+data:                                 # Секція з даними (key: value)
+  # Порт на якому слухає додаток всередині контейнера
+  APP_PORT: "8383"
+
+  # Режим роботи Gin (можливі значення: debug, release, test)
+  # debug - багато логів, для розробки
+  # release - мінімум логів, для продакшну
+  GIN_MODE: "debug"
+
+  # CORS налаштування - які origins можуть звертатися до API
+  # У staging можна дозволити більше origins для тестування
+  ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,https://staging.orchestra.example.com"
+
+  # Таймзона для логів та часових міток
+  TZ: "Europe/Kiev"
+
+  # Рівень логування (info, debug, warn, error)
+  LOG_LEVEL: "debug"
+
+  # Максимальний розмір тіла запиту (для POST/PUT)
+  MAX_REQUEST_SIZE: "10MB"
+
+  # Таймаут для HTTP запитів (в секундах)
+  REQUEST_TIMEOUT: "30"
+
+  # Можна додати будь-які інші змінні:
+  # DATABASE_HOST: "postgres-service"
+  # REDIS_HOST: "redis-service"
+  # API_VERSION: "v1"

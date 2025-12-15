@@ -1,0 +1,448 @@
+# =============================================================================
+# NETWORK POLICY - Правила мережевої безпеки (firewall для Pod'ів)
+# =============================================================================
+# Що це?
+# NetworkPolicy - це firewall rules для Pod'ів в Kubernetes.
+# Контролює який трафік може входити (ingress) та виходити (egress) з Pod'ів.
+#
+# Навіщо?
+# - Безпека: ізолювати Pod'и один від одного
+# - Least privilege: дозволити тільки необхідні з'єднання
+# - Захист від lateral movement (якщо хакер зламає один Pod)
+# - Compliance: відповідність стандартам безпеки (PCI DSS, HIPAA)
+#
+# Як працює?
+# 1. По замовчуванню в Kubernetes всі Pod'и можуть спілкуватися з усіма
+# 2. Коли створюєш NetworkPolicy - він стає whitelist (дозволено тільки вказане)
+# 3. CNI plugin (Calico, Cilium, Weave) читає NetworkPolicy
+# 4. CNI налаштовує iptables rules на Node'ах
+# 5. Kernel блокує недозволений трафік
+#
+# Вимоги:
+# - CNI plugin має підтримувати NetworkPolicy (Calico, Cilium, Weave, Canal)
+# - Не працює з Flannel (базовий CNI без NetworkPolicy)
+#
+# Перевірити чи підтримується:
+# kubectl get networkpolicy -A  # Якщо працює - підтримується
+#
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orchestra-backend-netpol
+  namespace: orchestra-staging
+  labels:
+    app: orchestra-backend
+spec:
+  # ---------------------------------------------------------------------------
+  # POD SELECTOR - до яких Pod'ів застосовується ця політика
+  # ---------------------------------------------------------------------------
+  podSelector:
+    matchLabels:
+      app: orchestra-backend       # Застосовується тільки до backend Pod'ів
+
+  # ---------------------------------------------------------------------------
+  # POLICY TYPES - які типи трафіку контролювати
+  # ---------------------------------------------------------------------------
+  policyTypes:
+  - Ingress                        # Контролювати вхідний трафік
+  - Egress                         # Контролювати вихідний трафік
+
+  # Якщо не вказати - по замовчуванню весь трафік блокується!
+
+  # ---------------------------------------------------------------------------
+  # INGRESS - хто може з'єднуватися З нашими Pod'ами
+  # ---------------------------------------------------------------------------
+  ingress:
+  # Правило #1: дозволити трафік з Ingress Controller
+  - from:
+    - namespaceSelector:           # З namespace ingress-nginx
+        matchLabels:
+          name: ingress-nginx
+      podSelector:                 # І тільки з Pod'ів ingress-controller
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8383                   # На порту 8383
+
+  # Правило #2: дозволити трафік з frontend Pod'ів (в тому самому namespace)
+  - from:
+    - podSelector:                 # Якщо не вказати namespaceSelector - той самий namespace
+        matchLabels:
+          app: orchestra-frontend
+    ports:
+    - protocol: TCP
+      port: 8383
+
+  # Правило #3: дозволити трафік з конкретних IP (наприклад офісна мережа)
+  - from:
+    - ipBlock:
+        cidr: 192.168.1.0/24       # Дозволити з цієї підмережі
+        except:                    # Окрім цих IP
+        - 192.168.1.100/32
+    ports:
+    - protocol: TCP
+      port: 8383
+
+  # Правило #4: дозволити health checks з будь-якого Pod'а в кластері
+  - from:
+    - namespaceSelector: {}        # Пусті фігурні дужки = всі namespace
+    ports:
+    - protocol: TCP
+      port: 8383
+
+  # ---------------------------------------------------------------------------
+  # EGRESS - куди наші Pod'и можуть з'єднуватися
+  # ---------------------------------------------------------------------------
+  egress:
+  # Правило #1: дозволити DNS (критично важливо!)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system        # Namespace де CoreDNS
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns        # Pod'и CoreDNS
+    ports:
+    - protocol: UDP
+      port: 53                     # DNS port
+
+  # Правило #2: дозволити з'єднання до PostgreSQL
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432                   # PostgreSQL port
+
+  # Правило #3: дозволити з'єднання до Redis
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379                   # Redis port
+
+  # Правило #4: дозволити HTTPS до зовнішніх API
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0            # Весь інтернет
+        except:                    # Окрім приватних мереж
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    ports:
+    - protocol: TCP
+      port: 443                    # HTTPS
+    - protocol: TCP
+      port: 80                     # HTTP
+
+  # Правило #5: дозволити Kubernetes API server
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: default
+    ports:
+    - protocol: TCP
+      port: 443
+
+# =============================================================================
+# ПРИКЛАДИ РІЗНИХ КОНФІГУРАЦІЙ
+# =============================================================================
+
+---
+# ---------------------------------------------------------------------------
+# Default Deny All - заблокувати весь трафік
+# ---------------------------------------------------------------------------
+# Створи це першим, потім додавай дозволені правила
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: orchestra-staging
+spec:
+  podSelector: {}                  # Пусті дужки = всі Pod'и в namespace
+  policyTypes:
+  - Ingress
+  - Egress
+  # Немає ingress/egress правил = весь трафік блокується
+
+---
+# ---------------------------------------------------------------------------
+# Allow All - дозволити весь трафік (default behavior)
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all
+  namespace: orchestra-staging
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - {}                             # Пусті дужки = дозволити з будь-яких джерел
+  egress:
+  - {}                             # Пусті дужки = дозволити на будь-які напрямки
+
+---
+# ---------------------------------------------------------------------------
+# Deny All Ingress, Allow All Egress
+# ---------------------------------------------------------------------------
+# Корисно для сервісів які тільки викликають інші API (не приймають запити)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-ingress-allow-egress
+  namespace: orchestra-staging
+spec:
+  podSelector:
+    matchLabels:
+      app: background-worker       # Worker який тільки відправляє запити
+  policyTypes:
+  - Ingress
+  - Egress
+  # Немає ingress правил = весь вхідний трафік блокується
+  egress:
+  - {}                             # Дозволити весь вихідний трафік
+
+---
+# ---------------------------------------------------------------------------
+# Allow only same namespace
+# ---------------------------------------------------------------------------
+# Pod'и можуть спілкуватися тільки з Pod'ами в тому самому namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: orchestra-staging
+spec:
+  podSelector: {}                  # Всі Pod'и в namespace
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector: {}              # З будь-якого Pod'а (в тому самому namespace)
+  egress:
+  - to:
+    - podSelector: {}              # До будь-якого Pod'а (в тому самому namespace)
+  - to:                            # + DNS
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# ---------------------------------------------------------------------------
+# Database isolation - тільки backend може з'єднуватися до DB
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-isolation
+  namespace: orchestra-staging
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres                # Політика для Postgres Pod'ів
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: orchestra-backend   # Тільки backend може з'єднуватися
+    ports:
+    - protocol: TCP
+      port: 5432
+
+---
+# ---------------------------------------------------------------------------
+# Multi-tier application
+# ---------------------------------------------------------------------------
+# Frontend -> Backend -> Database
+# Кожен tier може спілкуватися тільки з наступним
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-netpol
+  namespace: orchestra-staging
+spec:
+  podSelector:
+    matchLabels:
+      tier: frontend
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3000
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          tier: backend            # Frontend може викликати тільки backend
+    ports:
+    - protocol: TCP
+      port: 8080
+  - to:                            # + DNS
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-netpol
+  namespace: orchestra-staging
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: frontend           # Backend приймає тільки від frontend
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          tier: database           # Backend може викликати тільки database
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:                            # + DNS + зовнішні API
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-netpol
+  namespace: orchestra-staging
+spec:
+  podSelector:
+    matchLabels:
+      tier: database
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: backend            # Database приймає тільки від backend
+    ports:
+    - protocol: TCP
+      port: 5432
+  egress:                          # Database не потребує egress (окрім DNS)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+# =============================================================================
+# ЯК ВИКОРИСТОВУВАТИ
+# =============================================================================
+#
+# 1. Перевірити чи CNI підтримує NetworkPolicy:
+#    kubectl api-versions | grep networking.k8s.io
+#    Має бути: networking.k8s.io/v1
+#
+# 2. Створити NetworkPolicy:
+#    kubectl apply -f network-policy.yaml
+#
+# 3. Перевірити чи створилася:
+#    kubectl get networkpolicy -n orchestra-staging
+#    kubectl describe networkpolicy orchestra-backend-netpol -n orchestra-staging
+#
+# 4. Тестувати з'єднання:
+#    # Створити test Pod
+#    kubectl run test-pod --image=alpine -n orchestra-staging --rm -it -- sh
+#    apk add curl
+#    # Спробувати з'єднатися до backend
+#    curl http://orchestra-backend-service:80
+#
+# 5. Debugging:
+#    # Якщо з'єднання не працює - перевір NetworkPolicy
+#    kubectl get networkpolicy -n orchestra-staging
+#    kubectl describe networkpolicy orchestra-backend-netpol -n orchestra-staging
+#    # Перевір labels Pod'ів
+#    kubectl get pods -n orchestra-staging --show-labels
+#
+# 6. Моніторинг:
+#    # Використовуй Calico або Cilium для моніторингу NetworkPolicy
+#    # Calico: calicoctl get networkpolicy
+#    # Cilium: cilium monitor --type drop
+#
+# =============================================================================
+# BEST PRACTICES
+# =============================================================================
+#
+# 1. Start with default-deny-all, потім додавай дозволені правила
+# 2. Завжди дозволяй DNS (port 53 UDP)
+# 3. Використовуй labels для організації
+# 4. Тестуй NetworkPolicy на staging перед production
+# 5. Документуй чому потрібне кожне правило
+# 6. Використовуй namespace isolation
+# 7. Обмежуй egress до зовнішніх API (whitelist IP)
+# 8. Моніторинг dropped connections
+#
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Проблема: NetworkPolicy не працює
+# - CNI plugin не підтримує NetworkPolicy (наприклад Flannel)
+# - Встанови Calico або Cilium
+#
+# Проблема: Pod'и не можуть з'єднатися хоча NetworkPolicy правильна
+# - Перевір labels Pod'ів (selector має співпадати)
+# - Перевір namespace (чи правильний namespaceSelector)
+# - Перевір порти
+#
+# Проблема: DNS не працює
+# - Додай правило для egress до kube-system:kube-dns port 53 UDP
+#
+# Проблема: Health checks не працюють
+# - Додай ingress правило для kubelet (з Node IP)
+#
+# =============================================================================

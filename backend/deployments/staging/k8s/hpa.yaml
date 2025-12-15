@@ -1,0 +1,403 @@
+# =============================================================================
+# HPA - Horizontal Pod Autoscaler (Автоматичне масштабування)
+# =============================================================================
+# Що це?
+# HPA автоматично збільшує або зменшує кількість Pod'ів базуючись на метриках
+# (CPU, Memory, або custom metrics).
+#
+# Навіщо?
+# - Автоматична адаптація до навантаження
+# - Економія ресурсів (масштабує вниз коли мало навантаження)
+# - Висока доступність (масштабує вгору при зростанні трафіку)
+# - Не треба вручну змінювати replicas
+#
+# Як працює?
+# 1. Metrics Server збирає метрики з Pod'ів (CPU, Memory)
+# 2. HPA Controller кожні 15 секунд перевіряє метрики
+# 3. Порівнює поточне значення з target (бажаним)
+# 4. Обчислює потрібну кількість реплік
+# 5. Оновлює Deployment.spec.replicas
+# 6. Deployment створює/видаляє Pod'и
+#
+# Формула:
+# desiredReplicas = ceil[currentReplicas * (currentMetricValue / targetMetricValue)]
+#
+# Приклад:
+# - Поточно: 2 Pod'и, CPU 80%
+# - Target: 50% CPU
+# - Розрахунок: ceil[2 * (80 / 50)] = ceil[3.2] = 4 Pod'и
+#
+# Вимоги:
+# - Metrics Server має бути встановлений в кластері
+# - Pod'и мають мати resources.requests вказані
+# - Для custom metrics потрібен адаптер (prometheus-adapter, datadog)
+#
+# Встановлення Metrics Server:
+# kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+#
+# =============================================================================
+
+apiVersion: autoscaling/v2              # v2 = нова версія з багато метрик
+kind: HorizontalPodAutoscaler
+metadata:
+  name: orchestra-backend-hpa
+  namespace: orchestra-staging
+  labels:
+    app: orchestra-backend
+    environment: staging
+spec:
+  # ---------------------------------------------------------------------------
+  # TARGET - який ресурс масштабувати
+  # ---------------------------------------------------------------------------
+  scaleTargetRef:
+    apiVersion: apps/v1                # API версія ресурсу
+    kind: Deployment                   # Тип: Deployment, ReplicaSet, StatefulSet
+    name: orchestra-backend            # Ім'я Deployment який масштабуємо
+
+  # ---------------------------------------------------------------------------
+  # REPLICAS - мінімум та максимум Pod'ів
+  # ---------------------------------------------------------------------------
+  minReplicas: 2                       # Мінімальна кількість Pod'ів (завжди)
+  maxReplicas: 10                      # Максимальна кількість Pod'ів (не більше)
+
+  # HPA ніколи не зменшить нижче minReplicas і не збільшить вище maxReplicas
+
+  # ---------------------------------------------------------------------------
+  # METRICS - на основі чого масштабувати
+  # ---------------------------------------------------------------------------
+  metrics:
+  # Метрика #1: CPU utilization
+  - type: Resource                     # Тип метрики: Resource (CPU/Memory)
+    resource:
+      name: cpu                        # Ім'я ресурсу: cpu або memory
+      target:
+        type: Utilization              # Utilization = відсоток (%), AverageValue = абсолютне значення
+        averageUtilization: 70         # Масштабувати коли середній CPU > 70%
+                                       # Середній = сума CPU всіх Pod'ів / кількість Pod'ів
+                                       # Базується на resources.requests.cpu в Deployment
+
+  # Метрика #2: Memory utilization
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80         # Масштабувати коли середня пам'ять > 80%
+
+  # Метрика #3: CPU (абсолютне значення)
+  # - type: Resource
+  #   resource:
+  #     name: cpu
+  #     target:
+  #       type: AverageValue
+  #       averageValue: 500m           # Масштабувати коли середній CPU > 500 millicores
+
+  # Метрика #4: Memory (абсолютне значення)
+  # - type: Resource
+  #   resource:
+  #     name: memory
+  #     target:
+  #       type: AverageValue
+  #       averageValue: 200Mi          # Масштабувати коли середня пам'ять > 200Mi
+
+  # ---------------------------------------------------------------------------
+  # BEHAVIOR - поведінка масштабування (контроль швидкості)
+  # ---------------------------------------------------------------------------
+  behavior:
+    # Scale Up - збільшення кількості Pod'ів
+    scaleUp:
+      stabilizationWindowSeconds: 60   # Стабілізаційне вікно (чекати 60 сек перед scale up)
+                                       # Щоб не масштабувати занадто швидко на короткі спайки
+      policies:                        # Політики масштабування
+      - type: Percent                  # Збільшувати на відсоток
+        value: 100                     # Макс 100% (подвоїти кількість)
+        periodSeconds: 60              # За 60 секунд
+      - type: Pods                     # Або збільшувати на кількість Pod'ів
+        value: 2                       # Макс 2 Pod'и
+        periodSeconds: 60              # За 60 секунд
+      selectPolicy: Max                # Max = вибрати більше значення з policies
+                                       # Min = вибрати менше значення
+                                       # Disabled = не масштабувати
+
+    # Scale Down - зменшення кількості Pod'ів
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Чекати 5 хвилин перед scale down
+                                       # Довше ніж scale up, бо краще мати зайві ресурси
+      policies:
+      - type: Percent
+        value: 50                      # Макс 50% (зменшити наполовину)
+        periodSeconds: 60              # За 60 секунд
+      - type: Pods
+        value: 1                       # Або макс 1 Pod
+        periodSeconds: 60              # За 60 секунд
+      selectPolicy: Min                # Min = обережно зменшувати (вибрати менше)
+
+# =============================================================================
+# ПРИКЛАДИ РІЗНИХ КОНФІГУРАЦІЙ
+# =============================================================================
+
+---
+# ---------------------------------------------------------------------------
+# Простий HPA - тільки на основі CPU
+# ---------------------------------------------------------------------------
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: simple-hpa
+  namespace: orchestra-staging
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: orchestra-backend
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+
+---
+# ---------------------------------------------------------------------------
+# HPA з Custom Metrics (Prometheus)
+# ---------------------------------------------------------------------------
+# Вимагає prometheus-adapter або інший custom metrics адаптер
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: custom-metrics-hpa
+  namespace: orchestra-staging
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: orchestra-backend
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+  # CPU
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+
+  # HTTP Requests per second (custom metric з Prometheus)
+  - type: Pods                         # Тип: Pods (метрика для кожного Pod'а)
+    pods:
+      metric:
+        name: http_requests_per_second # Ім'я метрики з Prometheus
+      target:
+        type: AverageValue
+        averageValue: "1000"           # 1000 requests/sec на Pod
+
+  # Queue depth (custom metric)
+  - type: Object                       # Тип: Object (метрика для об'єкта)
+    object:
+      metric:
+        name: queue_depth              # Глибина черги
+      describedObject:
+        apiVersion: v1
+        kind: Service
+        name: message-queue
+      target:
+        type: Value
+        value: "100"                   # Макс 100 повідомлень в черзі
+
+---
+# ---------------------------------------------------------------------------
+# HPA з External Metrics (AWS CloudWatch, Azure Monitor)
+# ---------------------------------------------------------------------------
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: external-metrics-hpa
+  namespace: orchestra-staging
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: orchestra-backend
+  minReplicas: 2
+  maxReplicas: 50
+  metrics:
+  # External metric - SQS queue length
+  - type: External
+    external:
+      metric:
+        name: sqs_queue_length         # Довжина AWS SQS черги
+        selector:
+          matchLabels:
+            queue_name: my-queue
+      target:
+        type: AverageValue
+        averageValue: "30"             # 30 повідомлень на Pod
+
+---
+# ---------------------------------------------------------------------------
+# Aggressive HPA - швидке масштабування
+# ---------------------------------------------------------------------------
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: aggressive-hpa
+  namespace: orchestra-staging
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: orchestra-backend
+  minReplicas: 3
+  maxReplicas: 100                     # Багато Pod'ів для великого трафіку
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50         # Агресивний threshold
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0    # Без затримки
+      policies:
+      - type: Percent
+        value: 200                     # Потроїти кількість Pod'ів
+        periodSeconds: 15              # Дуже швидко
+      - type: Pods
+        value: 10                      # Або +10 Pod'ів
+        periodSeconds: 15
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 600  # 10 хвилин перед scale down
+      policies:
+      - type: Pods
+        value: 1                       # Обережно зменшувати
+        periodSeconds: 120             # Повільно
+
+---
+# ---------------------------------------------------------------------------
+# Conservative HPA - повільне масштабування
+# ---------------------------------------------------------------------------
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: conservative-hpa
+  namespace: orchestra-staging
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: orchestra-backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 85         # Високий threshold
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 90
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 300  # 5 хвилин чекати
+      policies:
+      - type: Percent
+        value: 50                      # +50% Pod'ів
+        periodSeconds: 120             # За 2 хвилини
+      selectPolicy: Min
+    scaleDown:
+      stabilizationWindowSeconds: 600  # 10 хвилин чекати
+      policies:
+      - type: Pods
+        value: 1                       # -1 Pod
+        periodSeconds: 300             # За 5 хвилин
+      selectPolicy: Min
+
+# =============================================================================
+# ЯК ВИКОРИСТОВУВАТИ
+# =============================================================================
+#
+# 1. Встановити Metrics Server (якщо нема):
+#    kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+#
+# 2. Перевірити чи Metrics Server працює:
+#    kubectl get deployment metrics-server -n kube-system
+#    kubectl top nodes        # Дивитись метрики Node'ів
+#    kubectl top pods -n orchestra-staging  # Дивитись метрики Pod'ів
+#
+# 3. Переконатися що в Deployment вказані resources.requests:
+#    Без requests HPA не може обчислити % utilization!
+#
+# 4. Створити HPA:
+#    kubectl apply -f hpa.yaml
+#
+# 5. Перевірити статус:
+#    kubectl get hpa -n orchestra-staging
+#    kubectl describe hpa orchestra-backend-hpa -n orchestra-staging
+#
+# 6. Подивитися метрики в реальному часі:
+#    kubectl get hpa orchestra-backend-hpa -n orchestra-staging --watch
+#
+# 7. Тестувати навантаження (load testing):
+#    # Встановити Apache Bench
+#    ab -n 100000 -c 100 http://your-service/endpoint
+#    # Або hey
+#    hey -z 5m -c 50 http://your-service/endpoint
+#
+# 8. Подивитися як HPA змінює кількість реплік:
+#    kubectl get pods -n orchestra-staging --watch
+#
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Проблема: HPA показує <unknown> для метрик
+# - Metrics Server не встановлений або не працює
+# - kubectl top pods не працює
+# - Встанови Metrics Server
+#
+# Проблема: HPA не масштабує
+# - Перевір чи вказані resources.requests в Deployment
+# - Перевір чи метрики доступні: kubectl get hpa
+# - Подивись опис: kubectl describe hpa
+# - Подивись логи HPA controller: kubectl logs -n kube-system -l k8s-app=kube-controller-manager
+#
+# Проблема: HPA масштабує занадто агресивно/повільно
+# - Налаштуй behavior.scaleUp/scaleDown
+# - Змінюй stabilizationWindowSeconds
+# - Змінюй policies
+#
+# Проблема: Метрики стрибають
+# - Збільшити stabilizationWindowSeconds
+# - Зменшити averageUtilization threshold
+# - Додати більше resources.limits щоб Pod'и не throttlились
+#
+# Проблема: Pod'и не встигають стартувати
+# - Збільшити stabilizationWindowSeconds
+# - Оптимізувати startup час додатку
+# - Додати startupProbe в Deployment
+#
+# =============================================================================
+# BEST PRACTICES
+# =============================================================================
+#
+# 1. Завжди вказуй resources.requests та resources.limits
+# 2. minReplicas >= 2 для high availability
+# 3. stabilizationWindowSeconds для scale up < scale down
+# 4. Тестуй HPA на staging перед production
+# 5. Моніторинг метрик (Prometheus + Grafana)
+# 6. Scale up швидше, scale down повільніше
+# 7. Використовуй multiple metrics для кращої точності
+# 8. Налаштуй alerts на HPA failures
+#
+# =============================================================================

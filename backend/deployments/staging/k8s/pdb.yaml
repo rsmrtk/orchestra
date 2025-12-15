@@ -1,0 +1,344 @@
+# =============================================================================
+# PDB - Pod Disruption Budget (Бюджет збоїв Pod'ів)
+# =============================================================================
+# Що це?
+# PDB гарантує що певна кількість Pod'ів завжди залишається доступною
+# під час добровільних disruptions (оновлення, drain node, eviction).
+#
+# Навіщо?
+# - Висока доступність під час оновлень кластера
+# - Захист від одночасного видалення всіх Pod'ів
+# - Контроль над тим скільки Pod'ів можна виключити одночасно
+# - Запобігти downtime під час maintenance
+#
+# Різниця між disruptions:
+# 1. Добровільні (voluntary) - контрольовані PDB:
+#    - kubectl drain node (eviction Pod'ів з Node)
+#    - Оновлення кластера (Node maintenance)
+#    - kubectl delete pod (через eviction API)
+#    - Cluster autoscaler (scale down Node)
+#
+# 2. Недобровільні (involuntary) - НЕ контрольовані PDB:
+#    - Hardware failure (Node crash)
+#    - Kernel panic
+#    - Out of memory kill (OOMKilled)
+#    - Network partition
+#    - Pod crash (application bug)
+#
+# Як працює?
+# 1. Створюєш PDB з мінімумом/максимумом доступних Pod'ів
+# 2. Коли admin робить kubectl drain або cluster autoscaler scale down
+# 3. Eviction API перевіряє PDB
+# 4. Якщо видалення порушить PDB - eviction відхилено (blocked)
+# 5. Admin/autoscaler має чекати поки інші Pod'и стануть доступними
+#
+# =============================================================================
+
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: orchestra-backend-pdb
+  namespace: orchestra-staging
+  labels:
+    app: orchestra-backend
+spec:
+  # ---------------------------------------------------------------------------
+  # SELECTOR - які Pod'и захищаються цим PDB
+  # ---------------------------------------------------------------------------
+  selector:
+    matchLabels:
+      app: orchestra-backend       # Має співпадати з labels Pod'ів в Deployment
+
+  # ---------------------------------------------------------------------------
+  # DISRUPTION BUDGET - скільки Pod'ів має залишатися доступними
+  # ---------------------------------------------------------------------------
+
+  # Варіант #1: мінімальна кількість доступних Pod'ів (найчастіше)
+  minAvailable: 1                  # Мінімум 1 Pod завжди має працювати
+                                   # Можна вказати число або відсоток
+
+  # Варіант #2: максимальна кількість недоступних Pod'ів
+  # maxUnavailable: 1              # Максимум 1 Pod може бути недоступним
+                                   # Також можна число або відсоток
+
+  # УВАГА: використовуй АБО minAvailable АБО maxUnavailable (не обидва!)
+
+  # ---------------------------------------------------------------------------
+  # UNHEALTHY POD EVICTION POLICY - що робити з unhealthy Pod'ами
+  # ---------------------------------------------------------------------------
+  unhealthyPodEvictionPolicy: IfHealthyBudget  # Kubernetes 1.27+
+  # IfHealthyBudget (default) - видаляти unhealthy Pod тільки якщо PDB дозволяє
+  # AlwaysAllow - завжди дозволяти видалення unhealthy Pod'ів (ігнорувати PDB)
+
+# =============================================================================
+# ПРИКЛАДИ РІЗНИХ КОНФІГУРАЦІЙ
+# =============================================================================
+
+---
+# ---------------------------------------------------------------------------
+# PDB з мінімальною кількістю Pod'ів (число)
+# ---------------------------------------------------------------------------
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend-pdb-min-count
+  namespace: orchestra-staging
+spec:
+  selector:
+    matchLabels:
+      app: orchestra-backend
+  minAvailable: 2                  # Мінімум 2 Pod'и завжди доступні
+                                   # Якщо у тебе 5 реплік - можна drain 3 одночасно
+                                   # Якщо у тебе 2 репліки - не можна drain жодної
+
+---
+# ---------------------------------------------------------------------------
+# PDB з мінімальним відсотком Pod'ів
+# ---------------------------------------------------------------------------
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend-pdb-min-percent
+  namespace: orchestra-staging
+spec:
+  selector:
+    matchLabels:
+      app: orchestra-backend
+  minAvailable: 50%                # Мінімум 50% Pod'ів доступні
+                                   # 10 реплік -> мінімум 5 доступних
+                                   # 3 репліки -> мінімум 2 доступні (round up)
+
+---
+# ---------------------------------------------------------------------------
+# PDB з максимальною кількістю недоступних Pod'ів (число)
+# ---------------------------------------------------------------------------
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend-pdb-max-count
+  namespace: orchestra-staging
+spec:
+  selector:
+    matchLabels:
+      app: orchestra-backend
+  maxUnavailable: 1                # Максимум 1 Pod може бути недоступним
+                                   # Зручно для rolling updates
+                                   # Співпадає з deployment.strategy.rollingUpdate.maxUnavailable
+
+---
+# ---------------------------------------------------------------------------
+# PDB з максимальним відсотком недоступних Pod'ів
+# ---------------------------------------------------------------------------
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend-pdb-max-percent
+  namespace: orchestra-staging
+spec:
+  selector:
+    matchLabels:
+      app: orchestra-backend
+  maxUnavailable: 25%              # Максимум 25% Pod'ів недоступні
+                                   # 8 реплік -> макс 2 недоступні
+                                   # 5 реплік -> макс 1 недоступний (round down)
+
+---
+# ---------------------------------------------------------------------------
+# Aggressive PDB - висока доступність
+# ---------------------------------------------------------------------------
+# Для critical production сервісів
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: critical-service-pdb
+  namespace: production
+spec:
+  selector:
+    matchLabels:
+      app: critical-service
+      tier: production
+  minAvailable: 90%                # 90% Pod'ів завжди доступні
+                                   # 10 реплік -> мінімум 9 доступних
+                                   # Дуже повільний drain, але висока доступність
+
+---
+# ---------------------------------------------------------------------------
+# Relaxed PDB - швидкі оновлення
+# ---------------------------------------------------------------------------
+# Для dev/staging або non-critical сервісів
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dev-service-pdb
+  namespace: development
+spec:
+  selector:
+    matchLabels:
+      app: dev-service
+  maxUnavailable: 50%              # Можна drain 50% одночасно
+                                   # Швидкі оновлення, але менша доступність
+
+---
+# ---------------------------------------------------------------------------
+# PDB для StatefulSet
+# ---------------------------------------------------------------------------
+# StatefulSet потребує особливої уваги через порядок Pod'ів
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: database-pdb
+  namespace: orchestra-staging
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+      role: master                 # Окремі PDB для master та replicas
+  minAvailable: 1                  # Master завжди має бути доступний
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: database-replica-pdb
+  namespace: orchestra-staging
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+      role: replica
+  maxUnavailable: 1                # Можна drain тільки 1 replica одночасно
+
+---
+# ---------------------------------------------------------------------------
+# PDB з matchExpressions (складні селектори)
+# ---------------------------------------------------------------------------
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: multi-app-pdb
+  namespace: orchestra-staging
+spec:
+  selector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - backend
+      - api
+      - worker
+    - key: tier
+      operator: NotIn
+      values:
+      - test
+  minAvailable: 2
+
+# =============================================================================
+# ВЗАЄМОДІЯ З DEPLOYMENT STRATEGY
+# =============================================================================
+#
+# PDB працює разом з Deployment rolling update strategy:
+#
+# Deployment:
+#   strategy:
+#     rollingUpdate:
+#       maxUnavailable: 1          # Під час update макс 1 Pod недоступний
+#       maxSurge: 1                # Під час update макс +1 Pod додатково
+#
+# PDB:
+#   minAvailable: 1                # Завжди мінімум 1 Pod доступний
+#
+# Сценарій оновлення (3 репліки):
+# 1. Старт: 3 Pod'и (v1)
+# 2. Створюється 1 новий Pod (v2) - тепер 4 Pod'и (maxSurge: 1)
+# 3. Чекаємо поки новий Pod стане Ready
+# 4. Видаляємо 1 старий Pod (v1) - тепер 3 Pod'и (maxUnavailable: 1)
+# 5. Повторюємо кроки 2-4 поки всі Pod'и не оновляться
+# 6. PDB гарантує що завжди мінімум 1 Pod доступний
+#
+# =============================================================================
+# ЯК ВИКОРИСТОВУВАТИ
+# =============================================================================
+#
+# 1. Створити PDB:
+#    kubectl apply -f pdb.yaml
+#
+# 2. Перевірити статус:
+#    kubectl get pdb -n orchestra-staging
+#    kubectl describe pdb orchestra-backend-pdb -n orchestra-staging
+#
+# 3. Подивитися статус PDB:
+#    kubectl get pdb orchestra-backend-pdb -n orchestra-staging -o yaml
+#    # Дивись на status.disruptionsAllowed - скільки Pod'ів можна drain
+#
+# 4. Тестувати eviction:
+#    # Спробувати drain Node
+#    kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
+#    # PDB блокуватиме drain якщо це порушить minAvailable
+#
+# 5. Тестувати з kubectl delete:
+#    # Спробувати видалити Pod через eviction API
+#    kubectl delete pod <pod-name> -n orchestra-staging
+#    # З PDB: eviction може бути блокована
+#    # Без PDB: Pod видаляється одразу
+#
+# 6. Override PDB (force):
+#    # Якщо ДІЙСНО потрібно drain Node навіть порушуючи PDB
+#    kubectl delete pod <pod-name> -n orchestra-staging --grace-period=0 --force
+#    # УВАГА: це небезпечно і може призвести до downtime!
+#
+# =============================================================================
+# МОНІТОРИНГ
+# =============================================================================
+#
+# Важливі метрики для моніторингу:
+#
+# 1. status.currentHealthy - скільки Pod'ів зараз healthy
+# 2. status.desiredHealthy - скільки має бути healthy
+# 3. status.disruptionsAllowed - скільки Pod'ів можна drain
+# 4. status.expectedPods - скільки Pod'ів очікується всього
+#
+# kubectl get pdb orchestra-backend-pdb -n orchestra-staging -o jsonpath='{.status}'
+#
+# Alert якщо:
+# - disruptionsAllowed == 0 (не можна drain жодного Pod'а)
+# - currentHealthy < desiredHealthy (щось не так з Pod'ами)
+#
+# =============================================================================
+# BEST PRACTICES
+# =============================================================================
+#
+# 1. Завжди створюй PDB для production сервісів
+# 2. minAvailable >= 1 для high availability
+# 3. Узгоджуй PDB з Deployment strategy
+# 4. Тестуй PDB на staging (drain Node)
+# 5. Моніторинг disruptionsAllowed
+# 6. Документуй чому вибрана конкретна конфігурація
+# 7. Окремі PDB для різних ролей (master/replica)
+# 8. Використовуй відсотки для dynamic scaling
+#
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Проблема: Не можу drain Node
+# - Перевір PDB: kubectl get pdb -A
+# - Подивись status.disruptionsAllowed
+# - Можливо minAvailable занадто високий
+# - Або недостатньо healthy Pod'ів
+#
+# Проблема: disruptionsAllowed == 0
+# - Збільшити кількість реплік
+# - Або зменшити minAvailable
+# - Або дочекатися поки Pod'и стануть Ready
+#
+# Проблема: PDB не працює
+# - Перевір selector (має співпадати з labels Pod'ів)
+# - kubectl get pods --show-labels
+# - Перевір чи використовується eviction API (не force delete)
+#
+# Проблема: Rolling update застряг
+# - Перевір PDB vs Deployment strategy
+# - maxUnavailable в обох має бути узгоджений
+# - Можливо новий Pod не стає Ready
+#
+# =============================================================================
