@@ -1,0 +1,44 @@
+# Compiled binaries
+server
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Test files
+coverage.out
+
+# Development
+tmp/
+.air.toml
+Dockerfile.dev
+
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# Environment
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Deployments (для основного Dockerfile)
+deployments/
+
+# Claude
+.claude/
