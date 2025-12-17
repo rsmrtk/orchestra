@@ -10,7 +10,7 @@ spec:
   template:
     metadata:
       labels:
-        app: orch-backend
+        app: orchestra-backend-production
     spec:
       containers:
         - name: orchestra-backend-production
