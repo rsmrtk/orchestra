@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: backend-production
+  name: orhestra-backend-production
 spec:
   replicas: 3
   selector:
@@ -13,8 +13,8 @@ spec:
         app: orch-backend
     spec:
       containers:
-        - name: orchestra-backend
-          image: orchestra-backend
+        - name: orchestra-backend-production
+          image: orchestra-backend-production
           imagePullPolicy: Never
           ports:
-            - containerPort: 8383
+            - containerPort: 8282
