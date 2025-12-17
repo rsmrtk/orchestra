@@ -6,11 +6,11 @@ spec:
   replicas: 3
   selector:
     matchLabels:
-      app: orchestra-backend
+      app: orchestra-backend-production
   template:
     metadata:
       labels:
-        app: orch-backend-production
+        app: orch-backend
     spec:
       containers:
         - name: orchestra-backend-production
