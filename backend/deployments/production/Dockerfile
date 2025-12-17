@@ -46,7 +46,7 @@ RUN chown -R appuser:appuser /home/appuser
 USER appuser
 
 # Експонуємо порт
-EXPOSE 8383
+EXPOSE 8282
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
