@@ -8,7 +8,7 @@ RUN apk add --no-cache git
 WORKDIR /app
 
 # Копіюємо dependency files
-COPY go.mod go.sum ./
+COPY go.mod go.sum ./backend/
 
 # Завантажуємо залежності (кешується якщо go.mod не змінюється)
 RUN go mod download
