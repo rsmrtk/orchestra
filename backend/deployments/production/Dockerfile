@@ -8,14 +8,14 @@ RUN apk add --no-cache git
 WORKDIR /app
 
 # Копіюємо dependency files
-COPY /backend/go.mod /backend/go.sum ./
+COPY go.mod go.sum ./
 
 # Завантажуємо залежності (кешується якщо go.mod не змінюється)
 RUN go mod download
 RUN go mod verify
 
 # Копіюємо код
-COPY backend/ ./
+COPY . ./
 
 # Білдимо з оптимізацією для production
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
@@ -50,7 +50,7 @@ EXPOSE 8282
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8383/congratulation || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8282/congratulation || exit 1
 
 # Запускаємо сервер
 CMD ["./server"]
