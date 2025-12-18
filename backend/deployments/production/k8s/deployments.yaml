@@ -19,3 +19,5 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 8282
+      imagePullSecrets:
+        - name: orchestra-secret-v1
