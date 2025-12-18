@@ -21,7 +21,7 @@ func main() {
 	// GET endpoint який повертає "Congratulation"
 	router.GET("/congratulation", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"message": "CongratulationV1",
+			"message": "CongratulationV2",
 		})
 	})
 
