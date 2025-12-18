@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: orchestra-backend-production
-          image: orchestra-backend-production-img:latest
+          image: orchestra-backend-production-img:v1.0.0
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8282
