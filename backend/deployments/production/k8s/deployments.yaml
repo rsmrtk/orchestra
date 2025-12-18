@@ -17,4 +17,4 @@ spec:
           image: martun5/orchestra-backend-production:v1.0.1
           imagePullPolicy: Always
           ports:
-            - containerPort: 8282
+            - containerPort: 8383
