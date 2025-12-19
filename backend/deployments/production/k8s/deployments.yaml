@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: orchestra-backend-production
-          image: martun5/orchestra-backend-production:v1.0.4
+          image: martun5/orchestra-backend-production:v1.0.5
           imagePullPolicy: Always
           ports:
             - containerPort: 8282
