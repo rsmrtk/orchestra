@@ -19,5 +19,47 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 8282
+          env:
+            - name: GIN_MODE
+              value: "release"
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: orchestra-backend-secret
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: orchestra-backend-secret
+                  key: DB_PORT
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: orchestra-backend-secret
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: orchestra-backend-secret
+                  key: DB_PASSWORD
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: orchestra-backend-secret
+                  key: DB_NAME
+          livenessProbe:
+            httpGet:
+              path: /congratulation
+              port: 8282
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /congratulation
+              port: 8282
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
       imagePullSecrets:
         - name: orchestra-secret-v1

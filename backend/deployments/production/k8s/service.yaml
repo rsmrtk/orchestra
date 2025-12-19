@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestra-backend-service
+  namespace: orchestra-space
+  labels:
+    app: orchestra-backend-production
+    environment: production
+spec:
+  type: ClusterIP
+  selector:
+    app: orchestra-backend-production
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 8282
