@@ -83,29 +83,7 @@ func main() {
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept"}
 	router.Use(cors.New(config))
 
-	// GET endpoint який повертає "Congratulation"
-	router.GET("/congratulation", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "CongratulationV2",
-		})
-	})
-
-	// Endpoint для перевірки підключення до БД
-	router.GET("/health/db", func(c *gin.Context) {
-		if err := db.Ping(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"status": "error",
-				"error":  "База даних недоступна",
-			})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "ok",
-			"message": "Підключення до БД успішне",
-		})
-	})
-
-	// Endpoint для виконання простого запиту до БД
+	// Endpoint для отримання версії бази даних
 	router.GET("/db/version", func(c *gin.Context) {
 		var version string
 		err := db.QueryRow("SELECT version()").Scan(&version)
@@ -119,23 +97,6 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "ok",
 			"version": version,
-		})
-	})
-
-	// Endpoint для отримання поточного часу з БД
-	router.GET("/db/time", func(c *gin.Context) {
-		var currentTime time.Time
-		err := db.QueryRow("SELECT NOW()").Scan(&currentTime)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status": "error",
-				"error":  fmt.Sprintf("Помилка запиту: %v", err),
-			})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"status":      "ok",
-			"server_time": currentTime.Format(time.RFC3339),
 		})
 	})
 
