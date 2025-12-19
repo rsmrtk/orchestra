@@ -2,10 +2,5 @@
 <project version="4">
   <component name="SqlDialectMappings">
     <file url="file://$PROJECT_DIR$/backend/pkg/dbmodel/db.sql" dialect="GenericSQL" />
-    <file url="file://$PROJECT_DIR$/backend/pkg/dbmodel/queries/courses.sql" dialect="GenericSQL" />
-    <file url="file://$PROJECT_DIR$/backend/pkg/dbmodel/queries/schools.sql" dialect="GenericSQL" />
-    <file url="file://$PROJECT_DIR$/backend/pkg/dbmodel/queries/user_courses.sql" dialect="GenericSQL" />
-    <file url="file://$PROJECT_DIR$/backend/pkg/dbmodel/queries/user_schools.sql" dialect="GenericSQL" />
-    <file url="file://$PROJECT_DIR$/backend/pkg/dbmodel/queries/users.sql" dialect="GenericSQL" />
   </component>
 </project>

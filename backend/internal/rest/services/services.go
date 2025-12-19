@@ -1,8 +1,7 @@
 package services
 
 import (
-	"database/sql"
-
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsmrtk/orchestra/backend/internal/rest/services/auth"
 )
 
@@ -12,7 +11,7 @@ type Services struct {
 }
 
 // NewServices створює новий екземпляр Services
-func NewServices(db *sql.DB) *Services {
+func NewServices(db *pgxpool.Pool) *Services {
 	return &Services{
 		Auth: auth.NewService(db),
 	}

@@ -1,8 +1,7 @@
 package auth
 
 import (
-	"database/sql"
-
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsmrtk/orchestra/backend/pkg/models"
 )
 
@@ -12,7 +11,7 @@ type Service struct {
 }
 
 // NewService створює новий auth сервіс
-func NewService(db *sql.DB) *Service {
+func NewService(db *pgxpool.Pool) *Service {
 	return &Service{
 		customerRepo: models.NewCustomerRepository(db),
 	}

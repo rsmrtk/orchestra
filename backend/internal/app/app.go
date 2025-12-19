@@ -2,20 +2,19 @@ package app
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"os"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rsmrtk/orchestra/backend/internal/rest"
 	"github.com/rsmrtk/orchestra/backend/internal/rest/services"
 )
 
 // App головна структура додатку
 type App struct {
-	db           *sql.DB
+	db           *pgxpool.Pool
 	restServices *services.Services
 	restServer   *rest.Server
 }
@@ -57,7 +56,7 @@ func Run() {
 	}
 }
 
-// initDB ініціалізує підключення до БД
+// initDB ініціалізує підключення до БД через pgxpool
 func (a *App) initDB(ctx context.Context) error {
 	dbHost := os.Getenv("DB_HOST")
 	dbPort := os.Getenv("DB_PORT")
@@ -66,25 +65,32 @@ func (a *App) initDB(ctx context.Context) error {
 	dbName := os.Getenv("DB_NAME")
 
 	connStr := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		dbHost, dbPort, dbUser, dbPassword, dbName,
+		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
+		dbUser, dbPassword, dbHost, dbPort, dbName,
 	)
 
 	log.Printf("Connecting to database: host=%s port=%s dbname=%s user=%s", dbHost, dbPort, dbName, dbUser)
 
-	var err error
-	a.db, err = sql.Open("postgres", connStr)
+	// Парсимо конфігурацію
+	config, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
-		return fmt.Errorf("failed to open database connection: %w", err)
+		return fmt.Errorf("failed to parse database config: %w", err)
 	}
 
 	// Налаштовуємо connection pool
-	a.db.SetMaxOpenConns(25)
-	a.db.SetMaxIdleConns(5)
-	a.db.SetConnMaxLifetime(5 * time.Minute)
+	config.MaxConns = 25
+	config.MinConns = 5
+	config.MaxConnLifetime = 5 * time.Minute
+	config.MaxConnIdleTime = 90 * time.Second
+
+	// Створюємо pool
+	a.db, err = pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		return fmt.Errorf("failed to create connection pool: %w", err)
+	}
 
 	// Перевіряємо з'єднання
-	if err := a.db.PingContext(ctx); err != nil {
+	if err := a.db.Ping(ctx); err != nil {
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
