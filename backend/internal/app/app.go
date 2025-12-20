@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 	"github.com/rsmrtk/orchestra/backend/internal/rest"
 	"github.com/rsmrtk/orchestra/backend/internal/rest/services"
 )
@@ -21,6 +22,11 @@ type App struct {
 
 // Run запускає додаток
 func Run() {
+	// Завантажуємо .env файл (ігноруємо помилку, якщо файл не існує)
+	if err := godotenv.Load(); err != nil {
+		log.Println("Warning: .env file not found, using environment variables")
+	}
+
 	ctx := context.Background()
 
 	app := &App{}

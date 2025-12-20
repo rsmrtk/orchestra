@@ -9,7 +9,7 @@ services:
     environment:
       - GIN_MODE=release
       - DB_HOST=172.17.0.2
-      - DB_PORT=5432
+      - DB_PORT=2828
       - DB_USER=rsmrtk
       - DB_PASSWORD=rsmrtkrsmrtk
       - DB_NAME=orchestra
