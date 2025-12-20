@@ -1,4 +1,26 @@
 services:
+  postgres:
+    image: postgres:17
+    container_name: orchestra-db
+    environment:
+      - POSTGRES_DB=orchestra-db
+      - POSTGRES_USER=rsmrtk
+      - POSTGRES_PASSWORD=rsmrtk
+    ports:
+      - "2828:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../../pkg/dbmodel/db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rsmrtk -d orchestra-db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - orchestra-network
+
   backend:
     build:
       context: ../..
@@ -8,12 +30,15 @@ services:
       - "8383:8282"
     environment:
       - GIN_MODE=release
-      - DB_HOST=172.17.0.2
-      - DB_PORT=2828
+      - DB_HOST=orchestra-db
+      - DB_PORT=5432
       - DB_USER=rsmrtk
-      - DB_PASSWORD=rsmrtkrsmrtk
-      - DB_NAME=orchestra
+      - DB_PASSWORD=rsmrtk
+      - DB_NAME=orchestra-db
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8282/congratulation"]
       interval: 30s
@@ -29,7 +54,7 @@ services:
       dockerfile: Dockerfile
     container_name: orchestra-frontend-production
     ports:
-      - "5173:5173"
+      - "5252:5252"
     depends_on:
       backend:
         condition: service_healthy
@@ -40,3 +65,7 @@ services:
 networks:
   orchestra-network:
     driver: bridge
+
+volumes:
+  postgres-data:
+    driver: local
