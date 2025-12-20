@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestra-frontend-production
+  namespace: orchestra-space
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default": "orchestra-frontend-backend-config"}'
+spec:
+  selector:
+    app: orchestra-frontend
+  type: NodePort
+  ports:
+    - name: "443-to-3000"
+      protocol: TCP
+      port: 443
+      targetPort: 3000
