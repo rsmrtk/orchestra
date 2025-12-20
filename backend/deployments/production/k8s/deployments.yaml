@@ -16,7 +16,7 @@ spec:
       containers:
         - name: orchestra-backend-production
           image: martun5/orchestra-backend-production:v1.0.8
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent  # Використовувати локальний image
           ports:
             - containerPort: 8282
           env:
@@ -61,5 +61,3 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 5
             timeoutSeconds: 3
-      imagePullSecrets:
-        - name: orchestra-secret-v1
