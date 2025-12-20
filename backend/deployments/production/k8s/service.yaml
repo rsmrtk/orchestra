@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: orchestra-backend-service
+  name: orchestra-backend-service-production
   namespace: orchestra-space
   labels:
     app: orchestra-backend-production
