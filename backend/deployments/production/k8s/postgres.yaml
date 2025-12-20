@@ -93,6 +93,6 @@ spec:
     app: postgres
   ports:
   - name: postgres
-    port: 5432
-    targetPort: 5432
+    port: 2828        # Ззовні доступний на порту 2828
+    targetPort: 5432  # Контейнер postgres слухає на 5432
     protocol: TCP
