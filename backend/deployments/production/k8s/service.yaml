@@ -7,7 +7,7 @@ metadata:
     app: orchestra-backend-production
     environment: production
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     app: orchestra-backend-production
   ports:
@@ -15,3 +15,4 @@ spec:
     protocol: TCP
     port: 80
     targetPort: 8282
+    nodePort: 30080  # Backend доступний на minikube-ip:30080
