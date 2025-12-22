@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: orchestra-frontend-stg-ingress
+  namespace: orchestra-staging
+  annotations:
+    kubernetes.io/ingress.global-static-ip-name: orchestra-frontend-stg-ingress-ip
+    # UPDATE THIS: Change to your SSL certificate name
+    ingress.gcp.kubernetes.io/pre-shared-cert: orchestra-stg-ssl-cert
+    kubernetes.io/ingress.allow-http: "false"
+    kubernetes.io/ingress.class: "gce"
+spec:
+  defaultBackend:
+    service:
+      name: orchestra-frontend-stg-service
+      port:
+        number: 443
