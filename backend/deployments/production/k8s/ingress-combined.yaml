@@ -1,0 +1,83 @@
+# =============================================================================
+# INGRESS COMBINED - Frontend + Backend на одній адресі
+# =============================================================================
+# Це об'єднує frontend і backend на одній адресі:
+# - http://orchestra.local/         -> Frontend
+# - http://orchestra.local/api/     -> Backend API
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: orchestra-combined-ingress
+  namespace: orchestra-space
+  annotations:
+    # Nginx ingress annotations
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  labels:
+    app: orchestra
+    environment: production
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: orchestra.local
+    http:
+      paths:
+      # Backend API - всі запити на /api/* йдуть до backend
+      - path: /api(/|$)(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: orchestra-backend-service-production
+            port:
+              number: 80
+
+      # Frontend - всі інші запити йдуть до frontend
+      - path: /(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: orchestra-frontend-service-production
+            port:
+              number: 80
+
+---
+# =============================================================================
+# ЯК ЦЕ ПРАЦЮЄ
+# =============================================================================
+#
+# 1. User відкриває: http://orchestra.local/
+#    └─> Ingress перенаправляє -> Frontend Pod:3000
+#        Frontend serve HTML/JS
+#
+# 2. Frontend JavaScript робить fetch('/api/congratulation')
+#    └─> Ingress бачить /api/ prefix
+#        └─> Rewrite: /api/congratulation -> /congratulation
+#            └─> Перенаправляє -> Backend Pod:8282
+#                Backend повертає JSON
+#
+# 3. Frontend JavaScript робить fetch('/api/auth/login')
+#    └─> Ingress: /api/auth/login -> /auth/login
+#        └─> Backend обробляє login
+#
+# Результат: ВСЕ працює на одній адресі http://orchestra.local
+#
+# =============================================================================
+# SETUP
+# =============================================================================
+#
+# 1. Встанови Ingress Controller (якщо немає):
+#    minikube addons enable ingress
+#
+# 2. Apply цей Ingress:
+#    kubectl apply -f ingress-combined.yaml
+#
+# 3. Додай в /etc/hosts:
+#    sudo sh -c 'echo "$(minikube ip) orchestra.local" >> /etc/hosts'
+#
+# 4. Відкрий в браузері:
+#    http://orchestra.local/
+#
+# =============================================================================
