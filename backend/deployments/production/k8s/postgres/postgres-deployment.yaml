@@ -101,7 +101,7 @@ spec:
 
         # Додаткові налаштування PostgreSQL (опціонально)
         - name: POSTGRES_INITDB_ARGS
-          value: "--encoding=UTF8 --locale=uk_UA.UTF-8"
+          value: "--encoding=UTF8 --locale=C.UTF-8"
 
         # -----------------------------------------------------------------------
         # PORTS - порти які слухає контейнер
