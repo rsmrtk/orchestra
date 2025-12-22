@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: martun5/orchestra-frontend-production-img:v1.0.1
+        image: martun5/orchestra-frontend-production-img:v1.0.2
         imagePullPolicy: IfNotPresent  # Використовувати локальний image
         ports:
         - containerPort: 3000
