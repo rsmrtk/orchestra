@@ -1,0 +1,223 @@
+# =============================================================================
+# FRONTEND CONFIGMAP - Конфігурація для Frontend (React/Next.js)
+# =============================================================================
+# ConfigMap для frontend зберігає:
+# - API URLs (backend endpoints)
+# - Feature flags (увімкнути/вимкнути функції)
+# - Analytics keys (Google Analytics, etc.)
+# - Environment-specific налаштування
+#
+# ВАЖЛИВО для Frontend:
+# - НЕ зберігай секрети тут (API keys видно в браузері!)
+# - Використовуй env змінні або build-time variables
+# - Для React: REACT_APP_* змінні
+# - Для Next.js: NEXT_PUBLIC_* змінні
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestra-frontend-config
+  namespace: orchestra-space
+  labels:
+    app: orchestra-frontend
+    environment: production
+data:
+  # ---------------------------------------------------------------------------
+  # BACKEND API URL
+  # ---------------------------------------------------------------------------
+
+  # URL backend API
+  # Для production - використовуй domain name з Ingress
+  API_URL: "https://api.yourdomain.com"          # ⚠️ Зміни на свій domain!
+  # Або якщо backend на тому самому Ingress:
+  # API_URL: "https://yourdomain.com/api"
+
+  # WebSocket URL (якщо використовуєш)
+  # WS_URL: "wss://api.yourdomain.com/ws"
+
+  # ---------------------------------------------------------------------------
+  # APPLICATION SETTINGS
+  # ---------------------------------------------------------------------------
+
+  # Node environment
+  NODE_ENV: "production"
+
+  # Application port (всередині контейнера)
+  PORT: "3000"
+
+  # Application name
+  APP_NAME: "Orchestra Frontend"
+
+  # Application version
+  APP_VERSION: "1.0.3"
+
+  # ---------------------------------------------------------------------------
+  # FEATURE FLAGS
+  # ---------------------------------------------------------------------------
+  # Увімкнути/вимкнути функції без передеплою
+
+  FEATURE_NEW_DASHBOARD: "true"
+  FEATURE_DARK_MODE: "true"
+  FEATURE_ANALYTICS: "true"
+  FEATURE_BETA_FEATURES: "false"
+  FEATURE_MAINTENANCE_MODE: "false"
+
+  # ---------------------------------------------------------------------------
+  # ANALYTICS & MONITORING (якщо використовуєш)
+  # ---------------------------------------------------------------------------
+
+  # Google Analytics (якщо використовуєш)
+  # GOOGLE_ANALYTICS_ID: "G-XXXXXXXXXX"
+
+  # Sentry DSN для error tracking (якщо використовуєш)
+  # SENTRY_DSN: "https://xxx@sentry.io/xxx"
+
+  # ---------------------------------------------------------------------------
+  # CDN & ASSETS
+  # ---------------------------------------------------------------------------
+
+  # CDN URL для static assets (якщо використовуєш)
+  # CDN_URL: "https://cdn.yourdomain.com"
+
+  # Public URL
+  PUBLIC_URL: "https://yourdomain.com"           # ⚠️ Зміни на свій domain!
+
+  # ---------------------------------------------------------------------------
+  # LOCALE & I18N
+  # ---------------------------------------------------------------------------
+
+  # Default language
+  DEFAULT_LOCALE: "uk"
+
+  # Supported locales
+  SUPPORTED_LOCALES: "uk,en,ru"
+
+  # ---------------------------------------------------------------------------
+  # TIMEOUTS & LIMITS
+  # ---------------------------------------------------------------------------
+
+  # API request timeout (milliseconds)
+  API_TIMEOUT: "30000"
+
+  # Max file upload size (MB)
+  MAX_UPLOAD_SIZE: "10"
+
+  # ---------------------------------------------------------------------------
+  # THIRD-PARTY SERVICES (якщо використовуєш)
+  # ---------------------------------------------------------------------------
+
+  # Google Maps API key (якщо використовуєш)
+  # GOOGLE_MAPS_API_KEY: "xxx"  # ⚠️ Краще через Secret або env at build time
+
+  # Stripe publishable key (якщо використовуєш)
+  # STRIPE_PUBLISHABLE_KEY: "pk_live_xxx"
+
+---
+# =============================================================================
+# ЯК ВИКОРИСТОВУВАТИ CONFIGMAP В FRONTEND DEPLOYMENT
+# =============================================================================
+#
+# Спосіб 1: Env змінні (найпростіше для React/Next.js)
+# -----------------------------------------------------
+# env:
+#   - name: REACT_APP_API_URL
+#     valueFrom:
+#       configMapKeyRef:
+#         name: orchestra-frontend-config
+#         key: API_URL
+#
+#   - name: REACT_APP_FEATURE_DARK_MODE
+#     valueFrom:
+#       configMapKeyRef:
+#         name: orchestra-frontend-config
+#         key: FEATURE_DARK_MODE
+#
+# React app буде мати доступ:
+# const apiUrl = process.env.REACT_APP_API_URL;
+#
+# Спосіб 2: Завантажити всі змінні одразу
+# ----------------------------------------
+# envFrom:
+#   - configMapRef:
+#       name: orchestra-frontend-config
+#     prefix: REACT_APP_  # Додати prefix до всіх змінних
+#
+# Спосіб 3: Build-time variables (найкраще для frontend!)
+# --------------------------------------------------------
+# Для React/Next.js краще передавати змінні під час build:
+#
+# Dockerfile:
+# ARG API_URL
+# ARG FEATURE_DARK_MODE
+# ENV REACT_APP_API_URL=$API_URL
+# ENV REACT_APP_FEATURE_DARK_MODE=$FEATURE_DARK_MODE
+# RUN npm run build
+#
+# Переваги:
+# - Змінні "baked in" в JavaScript bundle
+# - Швидше (не треба читати env в runtime)
+# - Працює для static exports
+#
+# Недоліки:
+# - Треба rebuild для зміни config
+# - Не можна змінити без нового Docker image
+#
+# =============================================================================
+# SECURITY CONSIDERATIONS
+# =============================================================================
+#
+# ⚠️ КРИТИЧНО: Frontend - це PUBLIC код!
+# Все що в ConfigMap буде видно в браузері (JavaScript bundle)
+#
+# НЕ зберігай в ConfigMap:
+# ❌ API keys для server-side сервісів
+# ❌ Database credentials
+# ❌ Secret tokens
+# ❌ Private keys
+#
+# Можна зберігати:
+# ✅ Backend API URL (публічний)
+# ✅ Feature flags
+# ✅ Publishable keys (Stripe, etc.)
+# ✅ Google Analytics ID
+# ✅ CDN URLs
+#
+# Для секретів - використовуй backend proxy:
+# Frontend -> Backend -> Third-party API (з secret key)
+#
+# =============================================================================
+# ОНОВЛЕННЯ CONFIGMAP
+# =============================================================================
+#
+# 1. Відредагувати файл
+# 2. Застосувати зміни:
+#    kubectl apply -f frontend-configmap.yaml
+#
+# 3. Перезапустити Pod'и (якщо env змінні):
+#    kubectl rollout restart deployment/orchestra-frontend-production -n orchestra-space
+#
+# ВАЖЛИВО:
+# - Якщо використовуєш build-time variables - треба rebuild image!
+# - Якщо використовуєш runtime env - достатньо restart
+#
+# Автоматичний restart при зміні ConfigMap:
+# Використовуй Reloader (stakater/reloader):
+# kubectl apply -f https://raw.githubusercontent.com/stakater/Reloader/master/deployments/kubernetes/reloader.yaml
+#
+# Додай annotation в Deployment:
+# metadata:
+#   annotations:
+#     configmap.reloader.stakater.com/reload: "orchestra-frontend-config"
+#
+# =============================================================================
+# МОНІТОРИНГ
+# =============================================================================
+#
+# Подивитися ConfigMap:
+# kubectl get configmap orchestra-frontend-config -n orchestra-space -o yaml
+#
+# Перевірити чи Pod'и використовують:
+# kubectl describe pod <frontend-pod> -n orchestra-space | grep -A 10 "Environment"
+#
+# =============================================================================

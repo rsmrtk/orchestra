@@ -1,0 +1,291 @@
+# =============================================================================
+# FRONTEND NETWORK POLICY - Мережева безпека для Frontend
+# =============================================================================
+# Frontend NetworkPolicy має інші вимоги ніж backend:
+# - Frontend приймає трафік тільки від Ingress (users)
+# - Frontend може викликати Backend API
+# - Frontend НЕ може підключатися до БД (безпека!)
+# =============================================================================
+
+---
+# =============================================================================
+# POLICY #1: Frontend Ingress - хто може з'єднуватися ДО frontend
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-ingress-policy
+  namespace: orchestra-space
+  labels:
+    app: orchestra-frontend
+    environment: production
+spec:
+  podSelector:
+    matchLabels:
+      app: orchestra-frontend-production
+
+  policyTypes:
+  - Ingress
+
+  ingress:
+  # Rule #1: Дозволити трафік тільки з Ingress Controller
+  # Users -> Ingress -> Frontend
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx  # Ingress Controller namespace
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3000               # Frontend слухає на 3000
+
+  # Rule #2: Дозволити health checks з kube-system
+  # Kubernetes liveness/readiness probes
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 3000
+
+---
+# =============================================================================
+# POLICY #2: Frontend Egress - куди frontend може з'єднуватися
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-egress-policy
+  namespace: orchestra-space
+  labels:
+    app: orchestra-frontend
+    environment: production
+spec:
+  podSelector:
+    matchLabels:
+      app: orchestra-frontend-production
+
+  policyTypes:
+  - Egress
+
+  egress:
+  # Rule #1: Дозволити DNS (критично!)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+
+  # Rule #2: Дозволити з'єднання до Backend API
+  # Frontend може робити API calls до backend
+  - to:
+    - podSelector:
+        matchLabels:
+          app: orchestra-backend-production
+    ports:
+    - protocol: TCP
+      port: 8282               # Backend port
+
+  # Rule #3: Дозволити HTTPS до CDN/External Assets (опціонально)
+  # Якщо frontend потребує завантажувати зовнішні ресурси
+  # (fonts, images, third-party scripts)
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    ports:
+    - protocol: TCP
+      port: 443                # HTTPS
+    - protocol: TCP
+      port: 80                 # HTTP
+
+  # ⚠️ КРИТИЧНО: Frontend НЕ може підключатися до PostgreSQL!
+  # Немає правила для port 5432
+  # Це захищає БД від зламаного frontend
+
+---
+# =============================================================================
+# ЯК ЦЕ ПРАЦЮЄ (SECURITY SCENARIOS)
+# =============================================================================
+#
+# Scenario 1: User -> Frontend (✅ ДОЗВОЛЕНО)
+# -------------------------------------------
+# 1. User відкриває: https://yourdomain.com
+# 2. DNS -> Ingress External IP
+# 3. Request -> Ingress Controller Pod
+# 4. Ingress Controller перенаправляє -> Frontend Pod:3000
+# 5. NetworkPolicy frontend-ingress-policy перевіряє:
+#    ├─> Source: ingress-nginx Pod ✅
+#    ├─> Destination Port: 3000 ✅
+#    └─> ALLOW
+# 6. Frontend serve HTML/JS
+# 7. Response -> User
+#
+# Scenario 2: Frontend -> Backend API (✅ ДОЗВОЛЕНО)
+# --------------------------------------------------
+# 1. User action -> JavaScript fetch('/api/data')
+# 2. Frontend Pod робить request: http://orchestra-backend-service:80
+# 3. DNS resolve ✅ (egress rule #1)
+# 4. NetworkPolicy frontend-egress-policy перевіряє:
+#    ├─> Destination: backend Pod ✅
+#    ├─> Port: 8282 ✅
+#    └─> ALLOW
+# 5. Backend обробляє request
+# 6. Response -> Frontend -> User
+#
+# Scenario 3: Зламаний Frontend -> PostgreSQL (❌ БЛОКОВАНО)
+# ----------------------------------------------------------
+# 1. Хакер зламав frontend, вставив malicious code
+# 2. Malicious code намагається: postgres:5432
+# 3. DNS resolve ✅ (DNS дозволений)
+# 4. NetworkPolicy frontend-egress-policy перевіряє:
+#    ├─> Destination: postgres Pod
+#    ├─> Port: 5432
+#    ├─> Немає правила для postgres:5432 ❌
+#    └─> DROP
+# 5. Connection refused
+# 6. 🛡️ База даних захищена!
+#
+# Scenario 4: Direct access -> Frontend Pod (❌ БЛОКОВАНО)
+# --------------------------------------------------------
+# 1. Зловмисник дізнався Pod IP: 10.244.0.8
+# 2. Спроба підключитися напряму: curl http://10.244.0.8:3000
+# 3. NetworkPolicy frontend-ingress-policy перевіряє:
+#    ├─> Source: Зовнішній IP ❌
+#    ├─> НЕ ingress-nginx ❌
+#    └─> DROP
+# 4. 🛡️ Доступ тільки через Ingress!
+#
+# Scenario 5: Frontend -> External CDN (✅ ДОЗВОЛЕНО)
+# ---------------------------------------------------
+# 1. Frontend SSR потребує завантажити font: https://fonts.googleapis.com
+# 2. DNS resolve ✅
+# 3. NetworkPolicy frontend-egress-policy перевіряє:
+#    ├─> Destination: 142.250.185.10 (Google IP)
+#    ├─> Port: 443 ✅
+#    ├─> Не в except list ✅
+#    └─> ALLOW
+# 4. Font downloaded
+#
+# =============================================================================
+# ARCHITECTURE: 3-TIER SECURITY MODEL
+# =============================================================================
+#
+# Internet
+#    ↓
+# [Ingress Controller] ← NetworkPolicy: allow all (public facing)
+#    ↓
+# [Frontend Pods] ← NetworkPolicy: only from Ingress
+#    ↓
+# [Backend Pods] ← NetworkPolicy: from Frontend + Ingress
+#    ↓
+# [PostgreSQL] ← NetworkPolicy: ONLY from Backend (strictest!)
+#
+# Security Layers:
+# 1. Ingress: SSL, rate limiting, WAF
+# 2. Frontend: Можна тільки Backend API
+# 3. Backend: Можна тільки PostgreSQL
+# 4. PostgreSQL: Ізольована, тільки від Backend
+#
+# Атакуючому треба зламати ВСІ рівні щоб дістатися до БД!
+#
+# =============================================================================
+# FRONTEND-SPECIFIC SECURITY
+# =============================================================================
+#
+# Frontend - особливий кейс для NetworkPolicy:
+#
+# 1. SSR (Server-Side Rendering):
+#    - Next.js робить API calls на backend під час SSR
+#    - Треба дозволити egress до backend
+#
+# 2. Static Assets:
+#    - Fonts, images з CDN
+#    - Треба дозволити egress до 0.0.0.0/0:443
+#
+# 3. Third-Party APIs:
+#    - Google Analytics, Stripe, etc.
+#    - Викликаються з browser (user), не з Pod
+#    - Не потребують egress rules!
+#
+# 4. WebSocket (якщо використовуєш):
+#    - Додай egress rule для backend WebSocket port
+#
+# =============================================================================
+# TROUBLESHOOTING FRONTEND NETWORKPOLICY
+# =============================================================================
+#
+# Проблема: Frontend не може fetch backend API
+# kubectl exec -n orchestra-space <frontend-pod> -- \
+#   curl http://orchestra-backend-service-production/congratulation
+# Connection timeout
+#
+# Рішення:
+# 1. Перевір egress rule для backend:
+#    - podSelector: app=orchestra-backend-production
+#    - port: 8282
+# 2. Перевір DNS (має бути дозволений)
+# 3. Перевір backend NetworkPolicy (інші боку)
+#
+# Проблема: Users не можуть завантажити frontend
+# https://yourdomain.com -> timeout
+#
+# Рішення:
+# 1. Перевір ingress rule для Ingress Controller
+# 2. Перевір namespace labels:
+#    kubectl get namespace ingress-nginx --show-labels
+# 3. Тимчасово видали NetworkPolicy для testing
+#
+# Проблема: SSR не працює (fonts/images не завантажуються)
+# Next.js SSR errors: Failed to fetch...
+#
+# Рішення:
+# 1. Додай egress rule для external HTTPS:
+#    - ipBlock: 0.0.0.0/0
+#    - port: 443
+# 2. Або whitelist конкретні IP/CIDR для CDN
+#
+# =============================================================================
+# МОНІТОРИНГ
+# =============================================================================
+#
+# Перевірити NetworkPolicy:
+# kubectl get networkpolicy -n orchestra-space | grep frontend
+#
+# Тестувати frontend -> backend:
+# kubectl exec -it -n orchestra-space <frontend-pod> -- \
+#   curl -v http://orchestra-backend-service-production/congratulation
+#
+# Тестувати frontend -> postgres (має бути заблоковано):
+# kubectl exec -it -n orchestra-space <frontend-pod> -- \
+#   curl --max-time 5 postgres:5432
+# (timeout = заблоковано ✅)
+#
+# Для Cilium:
+# cilium monitor --type drop --related-to <frontend-pod>
+#
+# =============================================================================
+# BEST PRACTICES
+# =============================================================================
+#
+# 1. ✅ Frontend НЕ може підключатися до БД (НІКОЛИ!)
+# 2. ✅ Тільки Ingress може викликати Frontend
+# 3. ✅ Frontend може викликати Backend API
+# 4. ✅ Whitelist external CDN якщо можливо (замість 0.0.0.0/0)
+# 5. ✅ Окремі policies для ingress та egress
+# 6. ✅ Тестуй з realistic traffic (SSR, API calls)
+# 7. ✅ Monitor dropped connections (Cilium/Calico)
+# 8. ✅ Document чому кожне правило потрібне
+#
+# =============================================================================

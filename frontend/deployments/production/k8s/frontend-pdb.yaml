@@ -1,0 +1,216 @@
+# =============================================================================
+# FRONTEND PDB - Захист від downtime
+# =============================================================================
+# PDB для frontend особливо важливий тому що:
+# - Frontend - це перше що бачить користувач
+# - Downtime frontend = downtime всього додатку (з точки зору user)
+# - Users нетерпимі до downtime (abandoned carts, bad reviews)
+# =============================================================================
+
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: orchestra-frontend-pdb-production
+  namespace: orchestra-space
+  labels:
+    app: orchestra-frontend
+    environment: production
+spec:
+  # ---------------------------------------------------------------------------
+  # SELECTOR
+  # ---------------------------------------------------------------------------
+  selector:
+    matchLabels:
+      app: orchestra-frontend-production
+
+  # ---------------------------------------------------------------------------
+  # DISRUPTION BUDGET
+  # ---------------------------------------------------------------------------
+  minAvailable: 1              # Мінімум 1 Pod завжди доступний
+                               # З 2 реплік (minReplicas): можна drain 1 одночасно
+                               # З 20 реплік (maxReplicas): можна drain 19 одночасно
+
+  # Альтернатива - відсотки (краще для dynamic scaling):
+  # minAvailable: 50%          # Мінімум 50% Pod'ів доступні
+                               # 2 репліки -> мінімум 1
+                               # 20 реплік -> мінімум 10
+
+  # Або maxUnavailable:
+  # maxUnavailable: 50%        # Максимум 50% Pod'ів недоступні
+                               # Працює краще з HPA scaling
+
+  # ---------------------------------------------------------------------------
+  # UNHEALTHY POD EVICTION
+  # ---------------------------------------------------------------------------
+  unhealthyPodEvictionPolicy: IfHealthyBudget
+
+---
+# =============================================================================
+# ЧОМ FRONTEND PDB МЕНШ СТРОГИЙ НІЖ BACKEND
+# =============================================================================
+#
+# Frontend PDB: minAvailable: 1 (з 2)
+# Backend PDB: minAvailable: 2 (з 3)
+#
+# Чому різниця?
+#
+# 1. Frontend - stateless:
+#    - Немає database connections
+#    - Немає long-running transactions
+#    - Request -> Response (швидко)
+#    - Легко scale up/down
+#
+# 2. Backend - stateful-ish:
+#    - Database connection pool
+#    - Active sessions/transactions
+#    - Потрібен graceful shutdown
+#    - Важливіше тримати більше реплік
+#
+# 3. Frontend має HPA з maxReplicas: 20:
+#    - При високому навантаженні: 20 Pod'ів
+#    - minAvailable: 1 означає можна drain 19 одночасно
+#    - Достатньо для швидкого scale down
+#
+# 4. Frontend швидко recovery:
+#    - Startup time: 5-10 сек
+#    - Backend startup: 20-30 сек (DB connections, migrations)
+#    - Швидше recover після disruption
+#
+# =============================================================================
+# ВИКОРИСТАННЯ ВІДСОТКІВ (РЕКОМЕНДОВАНО)
+# =============================================================================
+#
+# Для frontend з HPA краще використовувати відсотки:
+#
+# apiVersion: policy/v1
+# kind: PodDisruptionBudget
+# spec:
+#   minAvailable: 50%          # АБО
+#   maxUnavailable: 50%
+#
+# Чому відсотки краще:
+#
+# Scenario 1: Low traffic (2 Pod'и)
+# ├─> minAvailable: 50% = 1 Pod
+# └─> Можна drain 1 Pod одночасно ✅
+#
+# Scenario 2: Medium traffic (10 Pod'ів)
+# ├─> minAvailable: 50% = 5 Pod'ів
+# └─> Можна drain 5 Pod'ів одночасно ✅
+#
+# Scenario 3: High traffic (20 Pod'ів)
+# ├─> minAvailable: 50% = 10 Pod'ів
+# └─> Можна drain 10 Pod'ів одночасно ✅
+#
+# З фіксованим числом (minAvailable: 1):
+# - 20 Pod'ів -> можна drain 19 (занадто агресивно!)
+# - 2 Pod'и -> можна drain 1 (ok)
+#
+# =============================================================================
+# ВЗАЄМОДІЯ З HPA ТА ROLLING UPDATE
+# =============================================================================
+#
+# Scenario: Rolling Update під час high traffic
+# ----------------------------------------------
+# HPA: 20 Pod'ів (maxReplicas)
+# PDB: minAvailable: 50% = 10 Pod'ів
+# Deployment: maxUnavailable: 1, maxSurge: 1
+#
+# Початок: 20 Pod'ів v1.0.3 (Ready)
+#
+# Крок 1: Deployment створює 1 новий Pod v1.0.4 (maxSurge: 1)
+# └─> Тепер: 20 old + 1 new = 21 Pod
+#
+# Крок 2: Deployment хоче видалити 1 старий Pod
+# └─> PDB check: 21 - 1 = 20 > 10 (minAvailable) ✅
+# └─> Pod v1.0.3 видаляється
+# └─> Тепер: 19 old + 1 new = 20 Pod
+#
+# Кроки 3-20: Повторюємо поки всі не оновляться
+# └─> PDB завжди гарантує мінімум 10 Ready Pod'ів
+#
+# Фініш: 20 Pod'ів v1.0.4
+#
+# Результат: Users не помітили update! Завжди було >10 Pod'ів.
+#
+# =============================================================================
+# SCENARIO: NODE DRAIN ПІД ЧАС MARKETING CAMPAIGN
+# =============================================================================
+#
+# Setup:
+# - 3 Nodes, кожен має ~7 frontend Pod'ів (всього 20)
+# - Marketing campaign: High traffic
+# - Admin потребує drain Node1 (maintenance)
+#
+# Node1: 7 Pod'ів
+# Node2: 7 Pod'ів
+# Node3: 6 Pod'ів
+# PDB: minAvailable: 50% = 10 Pod'ів
+#
+# kubectl drain node1:
+#
+# Kubernetes спробує evict 7 Pod'ів з Node1:
+# ├─> Current: 20 Ready
+# ├─> After evict: 20 - 7 = 13 Ready
+# ├─> PDB check: 13 > 10 ✅ ALLOWED
+# └─> Eviction починається
+#
+# Але: Deployment одразу створює нові Pod'и на Node2/Node3:
+# ├─> 7 Pod'ів evicted з Node1
+# ├─> 7 нових Pod'ів створені на Node2/Node3
+# └─> Завжди >10 Ready Pod'ів під час процесу
+#
+# Результат: Marketing campaign не постраждав!
+#
+# =============================================================================
+# ALTERNATIVE: AGGRESSIVE PDB (HIGHER AVAILABILITY)
+# =============================================================================
+#
+# Для ДУЖЕ критичних production applications:
+#
+# apiVersion: policy/v1
+# kind: PodDisruptionBudget
+# spec:
+#   minAvailable: 75%          # 75% завжди доступні
+#
+# Переваги:
+# ✅ Вища доступність під час disruptions
+# ✅ Більше Pod'ів обслуговують users завжди
+# ✅ Менший ризик перевантаження
+#
+# Недоліки:
+# ❌ Повільніший drain (може займати години)
+# ❌ Складніше maintenance
+# ❌ HPA може не встигнути scale down швидко
+#
+# =============================================================================
+# МОНІТОРИНГ
+# =============================================================================
+#
+# Перевірити PDB:
+# kubectl get pdb orchestra-frontend-pdb-production -n orchestra-space
+#
+# Status:
+#   Current:           20   # Поточна кількість
+#   Desired:           10   # Мінімум (50% з 20)
+#   Allowed disruptions: 10 # Можна drain зараз
+#
+# Alerts які треба налаштувати:
+# - Allowed disruptions < 2 (warning)
+# - Allowed disruptions = 0 (critical)
+# - Current < Desired (критична проблема!)
+#
+# =============================================================================
+# BEST PRACTICES ДЛЯ FRONTEND PDB
+# =============================================================================
+#
+# 1. ✅ Використовуй відсотки замість фіксованих чисел (з HPA)
+# 2. ✅ minAvailable: 50% - баланс між availability та flexibility
+# 3. ✅ Для e-commerce: 75% (критичний для revenue)
+# 4. ✅ Тестуй drain під час synthetic traffic
+# 5. ✅ Pre-warm перед maintenance (збільшити minReplicas)
+# 6. ✅ Coordinate з marketing team (не drain під час campaigns)
+# 7. ✅ Monitor disruption events (Prometheus alerts)
+# 8. ✅ Document maintenance windows (low traffic hours)
+#
+# =============================================================================
