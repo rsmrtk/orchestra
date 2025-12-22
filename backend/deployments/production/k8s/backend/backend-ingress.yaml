@@ -1,0 +1,309 @@
+# =============================================================================
+# INGRESS - Вхідна точка для зовнішнього доступу до Backend API
+# =============================================================================
+# Ingress - це rules для зовнішнього HTTP/HTTPS доступу до Services.
+# Це як "reverse proxy" або "load balancer" для кластера.
+#
+# Навіщо потрібен Ingress замість NodePort/LoadBalancer?
+# ✅ Domain name (api.yourdomain.com)
+# ✅ SSL/TLS certificates (HTTPS)
+# ✅ Path-based routing (/api/v1, /api/v2)
+# ✅ Host-based routing (api.example.com, admin.example.com)
+# ✅ Один зовнішній IP для багатьох Services
+# ✅ Rate limiting, authentication, rewrites
+# ✅ Дешевше ніж окремий LoadBalancer для кожного Service
+#
+# Вимоги:
+# - Ingress Controller має бути встановлений (nginx, traefik, haproxy, etc.)
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: orchestra-backend-ingress-production
+  namespace: orchestra-space
+  labels:
+    app: orchestra-backend
+    environment: production
+  # ---------------------------------------------------------------------------
+  # ANNOTATIONS - налаштування для Ingress Controller
+  # ---------------------------------------------------------------------------
+  annotations:
+    # Ingress Class (якщо кілька Ingress Controllers)
+    kubernetes.io/ingress.class: "nginx"  # nginx, traefik, gce, etc.
+
+    # SSL/TLS налаштування
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"  # Якщо використовуєш cert-manager
+    # cert-manager автоматично створить SSL certificate від Let's Encrypt
+
+    # HTTPS redirect (перенаправити HTTP -> HTTPS)
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+
+    # SSL protocols
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.2 TLSv1.3"
+
+    # CORS (якщо потрібно)
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://orchestra.yourdomain.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization"
+
+    # Rate limiting (захист від DDoS)
+    nginx.ingress.kubernetes.io/limit-rps: "100"  # 100 requests per second per IP
+
+    # Client body size (для POST/PUT)
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"  # Максимум 10MB
+
+    # Timeouts
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+
+    # Backend protocol (якщо backend на HTTPS)
+    # nginx.ingress.kubernetes.io/backend-protocol: "HTTP"  # HTTP або HTTPS
+
+spec:
+  # ---------------------------------------------------------------------------
+  # INGRESS CLASS (alternative to annotation)
+  # ---------------------------------------------------------------------------
+  ingressClassName: nginx      # Kubernetes 1.18+
+
+  # ---------------------------------------------------------------------------
+  # TLS - SSL/TLS certificates
+  # ---------------------------------------------------------------------------
+  tls:
+  - hosts:
+    - api.yourdomain.com       # ⚠️ Зміни на свій domain!
+    secretName: orchestra-backend-tls  # Secret з SSL certificate
+                                       # Якщо використовуєш cert-manager - створить автоматично
+                                       # Інакше - створи вручну: kubectl create secret tls
+
+  # Як створити TLS secret вручну:
+  # kubectl create secret tls orchestra-backend-tls \
+  #   --cert=/path/to/cert.crt \
+  #   --key=/path/to/cert.key \
+  #   --namespace=orchestra-space
+
+  # ---------------------------------------------------------------------------
+  # RULES - правила маршрутизації
+  # ---------------------------------------------------------------------------
+  rules:
+  # Rule #1: Маршрутизація для api.yourdomain.com
+  - host: api.yourdomain.com   # ⚠️ Зміни на свій domain!
+    http:
+      paths:
+      # Path #1: Всі запити до backend API
+      - path: /                # Шлях (/ = всі запити)
+        pathType: Prefix       # Prefix або Exact
+        backend:
+          service:
+            name: orchestra-backend-service-production  # Ім'я Service
+            port:
+              number: 80       # Порт Service
+
+  # Можна додати більше rules для інших domains або paths:
+  # - host: api-v2.yourdomain.com
+  #   http:
+  #     paths:
+  #     - path: /
+  #       pathType: Prefix
+  #       backend:
+  #         service:
+  #           name: orchestra-backend-v2-service
+  #           port:
+  #             number: 80
+
+---
+# =============================================================================
+# ЯК ЦЕ ПРАЦЮЄ (REQUEST FLOW)
+# =============================================================================
+#
+# Повний шлях HTTP request:
+#
+# 1. Клієнт робить запит:
+#    curl https://api.yourdomain.com/congratulation
+#
+# 2. DNS resolve:
+#    api.yourdomain.com -> <ingress-external-ip>
+#    (DNS record має вказувати на Ingress LoadBalancer IP)
+#
+# 3. Request приходить на Ingress Controller:
+#    └─> Ingress Controller (nginx pod) слухає на port 80/443
+#
+# 4. Ingress Controller читає Ingress rules:
+#    ├─> Host: api.yourdomain.com ✅ match
+#    ├─> Path: /congratulation ✅ match (prefix /)
+#    └─> Backend: orchestra-backend-service-production:80
+#
+# 5. SSL/TLS termination:
+#    ├─> Ingress Controller декриптує HTTPS
+#    ├─> Використовує certificate з Secret orchestra-backend-tls
+#    └─> Перенаправляє як HTTP до Service (або HTTPS якщо backend-protocol)
+#
+# 6. Request до Service:
+#    http://orchestra-backend-service-production:80/congratulation
+#
+# 7. Service load balancing:
+#    ├─> Service має 3 Ready Pod'и endpoints
+#    └─> Вибирає випадковий Pod
+#
+# 8. Request до Pod:
+#    http://10.244.0.5:8282/congratulation
+#
+# 9. Backend додаток обробляє request:
+#    └─> Gin framework отримує request
+#
+# 10. Response назад:
+#     Backend -> Pod -> Service -> Ingress -> Client
+#
+# Результат:
+# Client отримує response через HTTPS з domain name!
+#
+# =============================================================================
+# ВСТАНОВЛЕННЯ INGRESS CONTROLLER
+# =============================================================================
+#
+# Ingress потребує Ingress Controller!
+# Ingress - це тільки rules, Controller - це implementation.
+#
+# NGINX Ingress Controller (найпопулярніший):
+# -------------------------------------------
+# kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/cloud/deploy.yaml
+#
+# Для minikube:
+# minikube addons enable ingress
+#
+# Перевірити чи встановлений:
+# kubectl get pods -n ingress-nginx
+# kubectl get svc -n ingress-nginx ingress-nginx-controller
+#
+# Дізнатися External IP:
+# kubectl get svc -n ingress-nginx ingress-nginx-controller
+# EXTERNAL-IP покаже IP (або <pending> якщо локально)
+#
+# Для minikube:
+# minikube ip
+#
+# Інші Ingress Controllers:
+# - Traefik: kubectl apply -f traefik.yaml
+# - HAProxy: helm install haproxy
+# - GCE (GKE): вбудований
+# - AWS ALB: aws-load-balancer-controller
+#
+# =============================================================================
+# НАЛАШТУВАННЯ DNS
+# =============================================================================
+#
+# Щоб domain працював, треба налаштувати DNS:
+#
+# 1. Дізнатися External IP Ingress:
+#    kubectl get svc -n ingress-nginx ingress-nginx-controller
+#    Приклад: EXTERNAL-IP = 35.123.45.67
+#
+# 2. Створити DNS A record у свого domain provider:
+#    api.yourdomain.com -> 35.123.45.67
+#
+# 3. Перевірити DNS:
+#    nslookup api.yourdomain.com
+#    Має повернути 35.123.45.67
+#
+# 4. Тестувати:
+#    curl https://api.yourdomain.com/congratulation
+#
+# Для локального тестування (без реального DNS):
+# /etc/hosts:
+# 192.168.49.2 api.yourdomain.com
+# (де 192.168.49.2 = minikube ip)
+#
+# =============================================================================
+# SSL/TLS CERTIFICATES
+# =============================================================================
+#
+# Спосіб 1: cert-manager (автоматичний, рекомендовано)
+# -----------------------------------------------------
+# 1. Встановити cert-manager:
+#    kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+#
+# 2. Створити ClusterIssuer для Let's Encrypt:
+#    apiVersion: cert-manager.io/v1
+#    kind: ClusterIssuer
+#    metadata:
+#      name: letsencrypt-prod
+#    spec:
+#      acme:
+#        server: https://acme-v02.api.letsencrypt.org/directory
+#        email: your-email@example.com
+#        privateKeySecretRef:
+#          name: letsencrypt-prod
+#        solvers:
+#        - http01:
+#            ingress:
+#              class: nginx
+#
+# 3. Додати annotation в Ingress:
+#    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+#
+# 4. cert-manager автоматично:
+#    - Створить certificate request
+#    - Пройде Let's Encrypt challenge
+#    - Створить Secret з certificate
+#    - Оновлюватиме certificate перед expiration
+#
+# Спосіб 2: Вручну (для self-signed або purchased certificates)
+# --------------------------------------------------------------
+# 1. Отримати certificate (від Let's Encrypt, DigiCert, etc.)
+# 2. Створити Secret:
+#    kubectl create secret tls orchestra-backend-tls \
+#      --cert=fullchain.pem \
+#      --key=privkey.pem \
+#      --namespace=orchestra-space
+#
+# 3. Використати в Ingress (вже є в spec.tls)
+#
+# =============================================================================
+# МОНІТОРИНГ
+# =============================================================================
+#
+# Перевірити Ingress:
+# kubectl get ingress -n orchestra-space
+#
+# Подивитися деталі:
+# kubectl describe ingress orchestra-backend-ingress-production -n orchestra-space
+#
+# Перевірити Ingress Controller logs:
+# kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx -f
+#
+# Тестувати з curl:
+# curl -v https://api.yourdomain.com/congratulation
+#
+# Тестувати SSL certificate:
+# openssl s_client -connect api.yourdomain.com:443 -servername api.yourdomain.com
+#
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Проблема: 404 Not Found
+# - Перевір host в Ingress vs domain в request
+# - Перевір path rules
+# - Перевір чи Service існує
+# - Дивись Ingress Controller logs
+#
+# Проблема: SSL certificate error
+# - Перевір чи Secret існує: kubectl get secret orchestra-backend-tls
+# - Перевір cert-manager logs: kubectl logs -n cert-manager
+# - Перевір DNS (має резолвитися до Ingress IP)
+# - Для Let's Encrypt: перевір чи domain доступний з інтернету
+#
+# Проблема: 502 Bad Gateway
+# - Backend Service не працює
+# - Pod'и не Ready
+# - Перевір Service endpoints: kubectl get endpoints
+# - Перевір чи Pod'и слухають на правильному порту
+#
+# Проблема: Ingress не отримує External IP
+# - LoadBalancer Service для Ingress Controller pending
+# - Для cloud: перевір cloud provider налаштування
+# - Для minikube: використовуй minikube tunnel
+#
+# =============================================================================

@@ -1,0 +1,216 @@
+# =============================================================================
+# FRONTEND HPA - Автоматичне масштабування Frontend
+# =============================================================================
+# HPA для frontend налаштовується трохи інакше ніж для backend:
+# - Frontend частіше має спайки трафіку (marketing campaigns, viral posts)
+# - Frontend менш resource-intensive (просто serve static files + SSR)
+# - Масштабування може бути більш агресивним
+# =============================================================================
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: orchestra-frontend-hpa-production
+  namespace: orchestra-space
+  labels:
+    app: orchestra-frontend
+    environment: production
+spec:
+  # ---------------------------------------------------------------------------
+  # SCALE TARGET
+  # ---------------------------------------------------------------------------
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: orchestra-frontend-production
+
+  # ---------------------------------------------------------------------------
+  # REPLICAS
+  # ---------------------------------------------------------------------------
+  minReplicas: 2               # Мінімум 2 для high availability
+                               # Frontend критичний - це перше що бачить користувач!
+  maxReplicas: 20              # Максимум 20 (більше ніж backend)
+                               # Frontend може обробляти більше одночасних користувачів
+
+  # ---------------------------------------------------------------------------
+  # METRICS
+  # ---------------------------------------------------------------------------
+  metrics:
+  # CPU Utilization (менший threshold ніж backend)
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60 # 60% (lower than backend 70%)
+                               # Frontend швидше scale up при навантаженні
+
+  # Memory Utilization
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+
+  # ---------------------------------------------------------------------------
+  # BEHAVIOR - агресивніше масштабування для frontend
+  # ---------------------------------------------------------------------------
+  behavior:
+    # Scale Up - швидше ніж backend
+    scaleUp:
+      stabilizationWindowSeconds: 30   # Тільки 30 сек (backend: 60)
+                                       # Швидша реакція на спайки трафіку
+      policies:
+      - type: Percent
+        value: 100                     # Подвоїти кількість
+        periodSeconds: 30              # За 30 секунд
+      - type: Pods
+        value: 4                       # Або +4 Pod'и (backend: 2)
+        periodSeconds: 30
+      selectPolicy: Max                # Агресивний scale up
+
+    # Scale Down - повільніше (як backend)
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5 хвилин
+      policies:
+      - type: Percent
+        value: 25                      # Зменшити макс на 25%
+        periodSeconds: 60
+      - type: Pods
+        value: 2                       # Або -2 Pod'и
+        periodSeconds: 60
+      selectPolicy: Min                # Обережний scale down
+
+---
+# =============================================================================
+# ЧОМ FRONTEND HPA РІЗНИТЬСЯ ВІД BACKEND
+# =============================================================================
+#
+# 1. Агресивніший Scale Up:
+#    - Frontend: stabilizationWindow 30 сек, +4 Pod'и
+#    - Backend: stabilizationWindow 60 сек, +2 Pod'и
+#    Чому: Frontend обслуговує користувачів напряму, швидка реакція критична
+#
+# 2. Нижчий CPU threshold:
+#    - Frontend: 60% CPU
+#    - Backend: 70% CPU
+#    Чому: Frontend швидше досягає CPU limits через SSR, краще scale раніше
+#
+# 3. Більший maxReplicas:
+#    - Frontend: 20 Pod'ів
+#    - Backend: 10 Pod'ів
+#    Чому: Frontend може обробляти більше одночасних users per Pod
+#
+# 4. Той самий Scale Down:
+#    - Обидва: 5 хв stabilization, обережне зменшення
+#    Чому: Краще мати зайві Pod'и ніж downtime
+#
+# =============================================================================
+# ПРИКЛАД: MARKETING CAMPAIGN SCENARIO
+# =============================================================================
+#
+# Сценарій: Email campaign відправлений, 10000 users заходять одночасно
+#
+# T=0: 2 Pod'и frontend (minReplicas), кожен 20% CPU
+# └─> Нормальне навантаження
+#
+# T=60s: Email campaign sent, трафік x10
+# ├─> 2 Pod'и x10 requests = CPU spike до 90%
+# ├─> Average CPU: 90% > 60% (target)
+# └─> HPA: Потрібно scale up!
+#
+# T=90s: HPA розраховує (30 сек stabilization)
+# ├─> desiredReplicas = ceil[2 * (90 / 60)] = ceil[3] = 3
+# ├─> Policy Percent: 2 * 100% = 4 Pod'и max
+# ├─> Policy Pods: 2 + 4 = 6 Pod'ів max
+# ├─> selectPolicy Max: Вибрати 6 Pod'ів
+# ├─> Але desired = 3, тому створити 3 Pod'и
+# └─> Тепер: 2 + 1 = 3 Pod'и
+#
+# T=120s: 3 Pod'и, але трафік все ще високий (85% CPU)
+# └─> HPA знову scale up до 4 Pod'ів
+#
+# T=150s: 4 Pod'и, CPU 80%
+# └─> HPA scale up до 5 Pod'ів
+#
+# T=180s: 5 Pod'ів, CPU 65%
+# └─> HPA scale up до 6 Pod'ів
+#
+# T=210s: 6 Pod'ів, CPU 55% < 60% (target)
+# └─> Стабільно! HPA зупиняє scale up
+#
+# T=600s: Campaign трафік спадає, CPU 30%
+# ├─> HPA чекає 5 хв (stabilization) перед scale down
+# └─> Через 5 хв: Починає scale down (по 2 Pod'и за раз)
+#
+# T=900s: Назад до 2 Pod'ів (minReplicas)
+#
+# Результат: Zero downtime! Users не помітили навантаження.
+#
+# =============================================================================
+# CUSTOM METRICS (ADVANCED)
+# =============================================================================
+#
+# Для frontend можна додати custom metrics:
+#
+# # HTTP Requests per second
+# - type: Pods
+#   pods:
+#     metric:
+#       name: http_requests_per_second
+#     target:
+#       type: AverageValue
+#       averageValue: "500"      # 500 RPS per Pod
+#
+# # Active WebSocket connections
+# - type: Pods
+#   pods:
+#     metric:
+#       name: websocket_connections
+#     target:
+#       type: AverageValue
+#       averageValue: "100"      # 100 connections per Pod
+#
+# # Response time (latency)
+# - type: Pods
+#   pods:
+#     metric:
+#       name: http_request_duration_p95
+#     target:
+#       type: AverageValue
+#       averageValue: "200m"     # P95 < 200ms
+#
+# Вимагає:
+# - Prometheus + Prometheus Adapter
+# - Application metrics endpoint
+#
+# =============================================================================
+# МОНІТОРИНГ
+# =============================================================================
+#
+# Дивитися HPA status:
+# kubectl get hpa orchestra-frontend-hpa-production -n orchestra-space --watch
+#
+# Дивитися Pod'и scaling:
+# kubectl get pods -n orchestra-space -l app=orchestra-frontend-production --watch
+#
+# Load testing для frontend:
+# ab -n 100000 -c 200 http://$(minikube ip):30003/
+# або
+# hey -z 5m -c 100 http://$(minikube ip):30003/
+#
+# =============================================================================
+# BEST PRACTICES ДЛЯ FRONTEND HPA
+# =============================================================================
+#
+# 1. ✅ minReplicas >= 2 (критично для user-facing додатку)
+# 2. ✅ Агресивніший scale up (швидка реакція на спайки)
+# 3. ✅ Повільний scale down (краще мати зайві resources)
+# 4. ✅ Моніторинг actual user traffic patterns
+# 5. ✅ Pre-warm перед marketing campaigns (збільшити minReplicas)
+# 6. ✅ CDN для static assets (зменшити навантаження на Pod'и)
+# 7. ✅ Test HPA з realistic traffic (не тільки load testing)
+# 8. ✅ Custom metrics для кращого scaling (RPS, latency)
+#
+# =============================================================================

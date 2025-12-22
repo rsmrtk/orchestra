@@ -1,0 +1,208 @@
+# =============================================================================
+# CONFIGMAP - Конфігурація додатку (не-секретні дані)
+# =============================================================================
+# ConfigMap зберігає конфігураційні дані у вигляді key-value пар.
+# Це для НЕ-СЕКРЕТНИХ даних! Для паролів використовуй Secret.
+#
+# Навіщо відокремлювати конфігурацію від коду?
+# - Змінювати налаштування без пересборки Docker image
+# - Різна конфігурація для різних середовищ (staging vs production)
+# - Централізоване управління конфігурацією
+# - Можна оновити ConfigMap і перезапустити Pod'и для застосування змін
+#
+# Різниця між ConfigMap та Secret:
+# - ConfigMap: НЕ-секретні дані (порти, URLs, feature flags)
+# - Secret: Секретні дані (паролі, токени, ключі)
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestra-backend-config
+  namespace: orchestra-space
+  labels:
+    app: orchestra-backend
+    environment: production
+data:
+  # ---------------------------------------------------------------------------
+  # APPLICATION SETTINGS
+  # ---------------------------------------------------------------------------
+
+  # Порт на якому слухає backend всередині контейнера
+  APP_PORT: "8282"
+
+  # Режим роботи Gin framework
+  # - debug: багато логів, корисно для розробки
+  # - release: мінімум логів, оптимізація для production
+  # - test: для unit/integration тестів
+  GIN_MODE: "release"
+
+  # Рівень логування
+  # trace > debug > info > warn > error > fatal > panic
+  LOG_LEVEL: "info"
+
+  # Формат логів
+  # - json: структуровані логи для ELK/Loki
+  # - text: читабельний формат для людини
+  LOG_FORMAT: "json"
+
+  # ---------------------------------------------------------------------------
+  # CORS (Cross-Origin Resource Sharing)
+  # ---------------------------------------------------------------------------
+
+  # Які origins можуть звертатися до API
+  # В production - тільки твій frontend domain
+  ALLOWED_ORIGINS: "https://orchestra.yourdomain.com,https://www.orchestra.yourdomain.com"
+
+  # Дозволені HTTP методи
+  ALLOWED_METHODS: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
+
+  # Дозволені headers
+  ALLOWED_HEADERS: "Origin,Content-Type,Accept,Authorization,X-Request-ID"
+
+  # Чи дозволяти cookies
+  ALLOW_CREDENTIALS: "true"
+
+  # ---------------------------------------------------------------------------
+  # TIMEOUTS & LIMITS
+  # ---------------------------------------------------------------------------
+
+  # Максимальний розмір тіла запиту (для POST/PUT)
+  MAX_REQUEST_SIZE: "10MB"
+
+  # Таймаут для HTTP запитів (в секундах)
+  REQUEST_TIMEOUT: "30"
+
+  # Таймаут для читання з connection
+  READ_TIMEOUT: "30"
+
+  # Таймаут для запису в connection
+  WRITE_TIMEOUT: "30"
+
+  # Idle timeout (скільки часу тримати keep-alive connection)
+  IDLE_TIMEOUT: "120"
+
+  # ---------------------------------------------------------------------------
+  # DATABASE SETTINGS (не-секретні)
+  # ---------------------------------------------------------------------------
+
+  # Максимальна кількість відкритих з'єднань до БД
+  DB_MAX_OPEN_CONNS: "25"
+
+  # Максимальна кількість idle з'єднань
+  DB_MAX_IDLE_CONNS: "5"
+
+  # Час життя з'єднання (в хвилинах)
+  DB_CONN_MAX_LIFETIME: "15"
+
+  # Таймаут для з'єднання до БД (в секундах)
+  DB_CONNECT_TIMEOUT: "10"
+
+  # ---------------------------------------------------------------------------
+  # TIMEZONE & LOCALE
+  # ---------------------------------------------------------------------------
+
+  # Таймзона для логів та часових міток
+  TZ: "Europe/Kiev"
+
+  # Locale
+  LANG: "uk_UA.UTF-8"
+
+  # ---------------------------------------------------------------------------
+  # FEATURE FLAGS (опціонально)
+  # ---------------------------------------------------------------------------
+
+  # Увімкнути/вимкнути певні функції без передеплою
+  FEATURE_NEW_API: "true"
+  FEATURE_MAINTENANCE_MODE: "false"
+  FEATURE_DEBUG_ENDPOINTS: "false"
+
+  # ---------------------------------------------------------------------------
+  # METRICS & MONITORING
+  # ---------------------------------------------------------------------------
+
+  # Порт для Prometheus metrics endpoint
+  METRICS_PORT: "9090"
+
+  # Шлях до health check endpoint
+  HEALTH_CHECK_PATH: "/congratulation"
+
+  # ---------------------------------------------------------------------------
+  # EXTERNAL SERVICES (опціонально)
+  # ---------------------------------------------------------------------------
+
+  # URLs зовнішніх сервісів (якщо використовуєш)
+  # REDIS_HOST: "redis-service:6379"
+  # ELASTICSEARCH_URL: "http://elasticsearch:9200"
+  # S3_BUCKET: "orchestra-production-assets"
+  # SMTP_HOST: "smtp.gmail.com:587"
+
+---
+# =============================================================================
+# ЯК ВИКОРИСТОВУВАТИ CONFIGMAP В DEPLOYMENT
+# =============================================================================
+#
+# Спосіб 1: Як змінні середовища (найпростіше)
+# ----------------------------------------------
+# env:
+#   - name: GIN_MODE
+#     valueFrom:
+#       configMapKeyRef:
+#         name: orchestra-backend-config
+#         key: GIN_MODE
+#
+# Спосіб 2: Завантажити всі значення як env змінні
+# --------------------------------------------------
+# envFrom:
+#   - configMapRef:
+#       name: orchestra-backend-config
+#
+# Спосіб 3: Як файли (volume mount)
+# ----------------------------------
+# volumes:
+#   - name: config
+#     configMap:
+#       name: orchestra-backend-config
+# volumeMounts:
+#   - name: config
+#     mountPath: /etc/config
+#     readOnly: true
+# # Файли будуть доступні як:
+# # /etc/config/GIN_MODE
+# # /etc/config/LOG_LEVEL
+# # etc.
+#
+# =============================================================================
+# ЯК ОНОВИТИ CONFIGMAP
+# =============================================================================
+#
+# 1. Відредагувати файл
+# 2. Застосувати зміни:
+#    kubectl apply -f configmap.yaml
+#
+# 3. Перезапустити Pod'и щоб підтягнути нові значення:
+#    kubectl rollout restart deployment/orhestra-backend-production -n orchestra-space
+#
+# УВАГА: Pod'и НЕ автоматично підтягують зміни ConfigMap!
+# Треба перезапускати вручну або використовувати:
+# - Reloader (stakater/reloader) - автоматичний restart при зміні ConfigMap
+# - ArgoCD - GitOps з автоматичним sync
+#
+# =============================================================================
+# МОНІТОРИНГ
+# =============================================================================
+#
+# Подивитися всі ConfigMaps:
+# kubectl get configmaps -n orchestra-space
+#
+# Подивитися значення:
+# kubectl get configmap orchestra-backend-config -n orchestra-space -o yaml
+#
+# Подивитися конкретне значення:
+# kubectl get configmap orchestra-backend-config -n orchestra-space \
+#   -o jsonpath='{.data.GIN_MODE}'
+#
+# Видалити ConfigMap:
+# kubectl delete configmap orchestra-backend-config -n orchestra-space
+#
+# =============================================================================

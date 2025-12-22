@@ -1,0 +1,232 @@
+# =============================================================================
+# POSTGRES SERVICE - Доступ до PostgreSQL всередині кластера
+# =============================================================================
+# Service - це стабільний endpoint для доступу до Pod'ів.
+# Навіщо потрібен Service якщо є Pod з IP?
+# - IP Pod'а змінюється після restart
+# - Service має стабільну DNS адресу
+# - Service робить load balancing між Pod'ами (якщо їх кілька)
+#
+# Типи Service:
+# - ClusterIP: Доступний тільки всередині кластера (для БД - найкраще!)
+# - NodePort: Доступний ззовні через Node IP:port (для dev/testing)
+# - LoadBalancer: Cloud load balancer (дорого, для БД не потрібно)
+# - ExternalName: DNS alias для зовнішнього сервісу
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestra-db
+  namespace: orchestra-space
+  labels:
+    app: postgres
+    component: database
+    environment: production
+spec:
+  # ---------------------------------------------------------------------------
+  # TYPE - тип Service
+  # ---------------------------------------------------------------------------
+  type: ClusterIP              # ✅ ClusterIP = доступний тільки всередині кластера
+                               # Це правильно для БД! Не треба відкривати назовні
+                               # Backend буде підключатися через цей Service
+
+  # ---------------------------------------------------------------------------
+  # CLUSTER IP (опціонально)
+  # ---------------------------------------------------------------------------
+  # clusterIP: 10.96.10.50     # Можна вказати конкретний IP (в межах service CIDR)
+                               # Якщо не вказати - Kubernetes виділить автоматично
+  # clusterIP: None            # Headless Service (для StatefulSet)
+
+  # ---------------------------------------------------------------------------
+  # SELECTOR - які Pod'и слухає цей Service
+  # ---------------------------------------------------------------------------
+  selector:
+    app: postgres              # ⚠️ Має співпадати з labels в Deployment!
+    component: database
+
+  # Service знайде всі Pod'и з цими labels і додасть їх IP в endpoints
+
+  # ---------------------------------------------------------------------------
+  # PORTS - порти які відкриває Service
+  # ---------------------------------------------------------------------------
+  ports:
+  - name: postgres
+    port: 2828                 # Порт на якому Service слухає (зовнішній для кластера)
+                               # Backend буде підключатися на цей порт
+    targetPort: 5432           # Порт контейнера (внутрішній в Pod)
+                               # PostgreSQL завжди слухає на 5432
+    protocol: TCP
+
+  # Як це працює:
+  # Backend -> orchestra-db:2828 -> Service -> Pod:5432 -> PostgreSQL
+
+  # ---------------------------------------------------------------------------
+  # SESSION AFFINITY (опціонально)
+  # ---------------------------------------------------------------------------
+  # sessionAffinity: ClientIP  # Requests з одного IP йдуть на той самий Pod
+  # sessionAffinityConfig:
+  #   clientIP:
+  #     timeoutSeconds: 10800  # Timeout для session affinity (3 години)
+
+---
+# =============================================================================
+# ЯК ПІДКЛЮЧИТИСЯ ДО БД ЧЕРЕЗ SERVICE
+# =============================================================================
+#
+# З Backend Pod'а (в тому самому namespace):
+# -----------------------------------------
+# Просто використовуй DNS ім'я Service:
+#
+# Host: orchestra-db
+# Port: 2828
+# User: rsmrtk (з Secret)
+# Password: rsmrtk (з Secret)
+# Database: orchestra-db
+#
+# Connection string:
+# postgresql://rsmrtk:rsmrtk@orchestra-db:2828/orchestra-db
+#
+# З іншого namespace:
+# -------------------
+# orchestra-db.orchestra-space.svc.cluster.local:2828
+# Формат: <service-name>.<namespace>.svc.cluster.local
+#
+# Тестування з Pod'а:
+# -------------------
+# kubectl run -it --rm debug --image=postgres:17 --restart=Never -- \
+#   psql -h orchestra-db.orchestra-space.svc.cluster.local -p 2828 \
+#   -U rsmrtk -d orchestra-db
+#
+# =============================================================================
+# ЯК SERVICE ЗНАХОДИТЬ POD'И (ENDPOINTS)
+# =============================================================================
+#
+# 1. Service має selector: app=postgres, component=database
+# 2. Kubernetes постійно шукає Pod'и з цими labels
+# 3. Коли Pod стає Ready - його IP додається в Service endpoints
+# 4. Коли Pod не Ready або видалений - IP видаляється з endpoints
+# 5. Service автоматично балансує трафік між усіма Ready Pod'ами
+#
+# Подивитися endpoints:
+# kubectl get endpoints orchestra-db -n orchestra-space
+#
+# Має бути щось типу:
+# NAME           ENDPOINTS          AGE
+# orchestra-db   10.244.0.5:5432    5m
+#
+# Якщо ENDPOINTS порожній:
+# - Немає Pod'ів з потрібними labels
+# - Pod'и не Ready (readiness probe fails)
+# - Selector в Service неправильний
+#
+# =============================================================================
+# DNS RESOLUTION
+# =============================================================================
+#
+# Kubernetes DNS (CoreDNS) автоматично створює DNS records для Service:
+#
+# Short name (в тому самому namespace):
+# orchestra-db
+# -> Резолвиться в ClusterIP: 10.96.10.50
+#
+# Fully Qualified Domain Name (FQDN):
+# orchestra-db.orchestra-space.svc.cluster.local
+#
+# Format:
+# <service-name>.<namespace>.svc.<cluster-domain>
+#
+# Тестування DNS:
+# kubectl run -it --rm debug --image=busybox --restart=Never -- \
+#   nslookup orchestra-db.orchestra-space.svc.cluster.local
+#
+# =============================================================================
+# SERVICE TYPES COMPARISON
+# =============================================================================
+#
+# ClusterIP (найчастіше для БД):
+# ✅ Доступний тільки всередині кластера
+# ✅ Безпечний (не відкритий назовні)
+# ✅ Швидкий (немає додаткових hops)
+# ❌ Не можна підключитися ззовні
+#
+# NodePort (для dev/testing):
+# ✅ Можна підключитися ззовні через Node IP
+# ❌ Потрібно знати IP Node
+# ❌ Небезпечно для production БД!
+# Приклад: 192.168.49.2:30432
+#
+# LoadBalancer (дорого, для БД не потрібно):
+# ✅ Cloud load balancer з зовнішнім IP
+# ✅ Автоматичний DNS
+# ❌ Коштує гроші
+# ❌ Небезпечно відкривати БД назовні
+#
+# Headless Service (для StatefulSet):
+# type: ClusterIP
+# clusterIP: None
+# ✅ Прямий доступ до конкретних Pod'ів
+# ✅ Потрібно для StatefulSet (postgres-0, postgres-1)
+# ❌ Немає load balancing
+#
+# =============================================================================
+# МОНІТОРИНГ
+# =============================================================================
+#
+# Перевірити Service:
+# kubectl get service orchestra-db -n orchestra-space
+#
+# Подивитися деталі:
+# kubectl describe service orchestra-db -n orchestra-space
+#
+# Перевірити endpoints:
+# kubectl get endpoints orchestra-db -n orchestra-space
+#
+# Тестувати connection з Pod'а:
+# kubectl run -it --rm test-db --image=postgres:17 --restart=Never -- \
+#   psql -h orchestra-db -p 2828 -U rsmrtk -d orchestra-db -c "SELECT 1;"
+#
+# Перевірити DNS:
+# kubectl run -it --rm test-dns --image=busybox --restart=Never -- \
+#   nslookup orchestra-db
+#
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Проблема: Не можу підключитися до БД через Service
+# 1. Перевірити чи Service існує:
+#    kubectl get svc orchestra-db -n orchestra-space
+#
+# 2. Перевірити endpoints:
+#    kubectl get endpoints orchestra-db -n orchestra-space
+#    Якщо порожньо -> перевір selector та labels Pod'ів
+#
+# 3. Перевірити чи Pod Ready:
+#    kubectl get pods -n orchestra-space -l app=postgres
+#    Має бути STATUS: Running, READY: 1/1
+#
+# 4. Перевірити порти:
+#    port: 2828 (Service слухає)
+#    targetPort: 5432 (Pod слухає)
+#    Має співпадати з containerPort в Deployment
+#
+# 5. Тестувати DNS:
+#    kubectl run -it --rm test --image=busybox --restart=Never -- \
+#      nslookup orchestra-db
+#
+# 6. Перевірити NetworkPolicy:
+#    kubectl get networkpolicy -n orchestra-space
+#    Можливо блокується трафік
+#
+# Проблема: Connection refused
+# - Pod не слухає на targetPort (перевір логи Pod'а)
+# - Firewall блокує (перевір NetworkPolicy)
+# - PostgreSQL не приймає connections (перевір postgresql.conf)
+#
+# Проблема: Connection timeout
+# - Pod не Ready (readiness probe fails)
+# - Service selector неправильний
+# - Network issues (CNI plugin проблеми)
+#
+# =============================================================================

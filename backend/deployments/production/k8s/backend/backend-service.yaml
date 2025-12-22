@@ -1,0 +1,270 @@
+# =============================================================================
+# BACKEND SERVICE - Доступ до Backend API
+# =============================================================================
+# Це виправлена версія твого service.yaml
+# Service забезпечує стабільний endpoint для доступу до backend Pod'ів
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestra-backend-service-production
+  namespace: orchestra-space
+  labels:
+    app: orchestra-backend-production
+    environment: production
+spec:
+  # ---------------------------------------------------------------------------
+  # TYPE - тип Service
+  # ---------------------------------------------------------------------------
+  type: NodePort               # NodePort = доступний через Node IP:port
+                               # Для production краще використовувати:
+                               # - LoadBalancer (якщо cloud)
+                               # - Ingress -> ClusterIP (найкраще)
+
+  # Альтернативи для production:
+  # type: ClusterIP            # Тільки всередині кластера + Ingress
+  # type: LoadBalancer         # Cloud load balancer з зовнішнім IP
+
+  # ---------------------------------------------------------------------------
+  # SELECTOR - які Pod'и слухає цей Service
+  # ---------------------------------------------------------------------------
+  selector:
+    app: orchestra-backend-production  # ⚠️ Має співпадати з labels в Deployment!
+
+  # Service автоматично знаходить всі Pod'и з цим label
+  # і додає їх IP в endpoints для load balancing
+
+  # ---------------------------------------------------------------------------
+  # PORTS
+  # ---------------------------------------------------------------------------
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80                   # Порт на якому Service слухає
+                               # Frontend/Ingress будуть підключатися на цей порт
+    targetPort: 8282           # Порт контейнера (containerPort в Deployment)
+                               # Backend слухає на 8282
+    nodePort: 30080            # Порт на Node для зовнішнього доступу
+                               # Доступний на: <node-ip>:30080
+                               # NodePort range: 30000-32767
+
+  # Як працює load balancing:
+  # Request -> Service:80 -> Load Balancer -> Random Pod:8282
+
+  # ---------------------------------------------------------------------------
+  # SESSION AFFINITY (опціонально)
+  # ---------------------------------------------------------------------------
+  # Якщо потрібно щоб requests з одного клієнта йшли на той самий Pod
+  # sessionAffinity: ClientIP
+  # sessionAffinityConfig:
+  #   clientIP:
+  #     timeoutSeconds: 10800  # 3 години
+
+---
+# =============================================================================
+# ЯК ПРАЦЮЄ SERVICE LOAD BALANCING
+# =============================================================================
+#
+# Service робить автоматичний load balancing між Pod'ами:
+#
+# 1. Service має selector: app=orchestra-backend-production
+# 2. Kubernetes знаходить всі Ready Pod'и з цим label
+# 3. IP адреси Pod'ів додаються в Service endpoints
+# 4. Коли приходить request -> Service вибирає випадковий endpoint
+# 5. Трафік йде на вибраний Pod
+#
+# Приклад з 3 репліками:
+# Pod 1: 10.244.0.5:8282 (Ready)
+# Pod 2: 10.244.0.6:8282 (Ready)
+# Pod 3: 10.244.0.7:8282 (Not Ready) -> виключений з endpoints
+#
+# Service endpoints: [10.244.0.5:8282, 10.244.0.6:8282]
+# Request 1 -> 10.244.0.5:8282
+# Request 2 -> 10.244.0.6:8282
+# Request 3 -> 10.244.0.5:8282
+# etc. (random distribution)
+#
+# =============================================================================
+# ЯК ПІДКЛЮЧИТИСЯ ДО BACKEND
+# =============================================================================
+#
+# З Frontend Pod'а (в тому самому namespace):
+# -------------------------------------------
+# Використовуй DNS ім'я Service:
+# http://orchestra-backend-service-production:80
+#
+# Або коротка форма:
+# http://orchestra-backend-service-production
+# (port 80 = default для http)
+#
+# З іншого namespace:
+# -------------------
+# http://orchestra-backend-service-production.orchestra-space.svc.cluster.local
+#
+# Ззовні кластера (через NodePort):
+# ----------------------------------
+# 1. Дізнатися IP Node:
+#    kubectl get nodes -o wide
+#    або для minikube:
+#    minikube ip
+#
+# 2. Підключитися:
+#    http://<node-ip>:30080
+#    Приклад: http://192.168.49.2:30080
+#
+# Через LoadBalancer (якщо type: LoadBalancer):
+# ---------------------------------------------
+# kubectl get service orchestra-backend-service-production -n orchestra-space
+# EXTERNAL-IP покаже зовнішній IP
+# Підключення: http://<external-ip>
+#
+# Через Ingress (найкраще для production):
+# ----------------------------------------
+# https://api.yourdomain.com -> Ingress -> Service:80 -> Pod:8282
+#
+# =============================================================================
+# ENDPOINTS MANAGEMENT
+# =============================================================================
+#
+# Kubernetes автоматично управляє endpoints:
+#
+# Коли Pod стає Ready:
+# 1. Readiness probe повертає success
+# 2. Pod отримує label "ready"
+# 3. Kubernetes додає IP Pod'а в Service endpoints
+# 4. Service починає слати трафік на цей Pod
+#
+# Коли Pod не Ready або видаляється:
+# 1. Readiness probe fails або Pod terminating
+# 2. Kubernetes видаляє IP Pod'а з endpoints
+# 3. Service НЕ шле трафік на цей Pod
+# 4. Існуючі connections можуть завершитися gracefully
+#
+# Подивитися endpoints:
+# kubectl get endpoints orchestra-backend-service-production -n orchestra-space
+#
+# Має бути щось типу:
+# NAME                                    ENDPOINTS                                         AGE
+# orchestra-backend-service-production    10.244.0.5:8282,10.244.0.6:8282,10.244.0.7:8282   5m
+#
+# =============================================================================
+# SERVICE TYPES ПОРІВНЯННЯ
+# =============================================================================
+#
+# 1. ClusterIP (найкраще для production з Ingress):
+# ✅ Доступний тільки всередині кластера
+# ✅ Безпечний
+# ✅ Використовується з Ingress для SSL/domain
+# ❌ Не можна підключитися ззовні напряму
+#
+# apiVersion: v1
+# kind: Service
+# spec:
+#   type: ClusterIP
+#   ports:
+#   - port: 80
+#     targetPort: 8282
+#
+# 2. NodePort (для dev/testing, те що ти маєш):
+# ✅ Можна підключитися ззовні через Node IP
+# ✅ Просто налаштувати
+# ❌ Треба знати IP Node
+# ❌ Порт в range 30000-32767
+# ❌ Немає SSL
+# ❌ Не production-ready
+#
+# 3. LoadBalancer (для production в cloud):
+# ✅ Cloud load balancer з зовнішнім IP
+# ✅ Автоматичний DNS
+# ✅ SSL через cloud LB
+# ❌ Коштує гроші
+# ❌ Тільки в cloud (AWS ELB, GCP LB, Azure LB)
+#
+# apiVersion: v1
+# kind: Service
+# spec:
+#   type: LoadBalancer
+#   ports:
+#   - port: 80
+#     targetPort: 8282
+#
+# 4. Ingress + ClusterIP (НАЙКРАЩЕ для production):
+# ✅ Domain name (api.yourdomain.com)
+# ✅ SSL/TLS certificates
+# ✅ Path-based routing (/api/v1, /api/v2)
+# ✅ Rate limiting, auth, etc.
+# ✅ Один зовнішній IP для багатьох Services
+#
+# Service:
+# spec:
+#   type: ClusterIP
+#   ports:
+#   - port: 80
+#     targetPort: 8282
+#
+# Ingress:
+# spec:
+#   rules:
+#   - host: api.yourdomain.com
+#     http:
+#       paths:
+#       - path: /
+#         backend:
+#           service:
+#             name: orchestra-backend-service-production
+#             port:
+#               number: 80
+#
+# =============================================================================
+# МОНІТОРИНГ
+# =============================================================================
+#
+# Перевірити Service:
+# kubectl get service orchestra-backend-service-production -n orchestra-space
+#
+# Подивитися деталі:
+# kubectl describe service orchestra-backend-service-production -n orchestra-space
+#
+# Перевірити endpoints:
+# kubectl get endpoints orchestra-backend-service-production -n orchestra-space
+#
+# Тестувати з Pod'а:
+# kubectl run -it --rm test --image=curlimages/curl --restart=Never -- \
+#   curl http://orchestra-backend-service-production/congratulation
+#
+# Тестувати zzовні (NodePort):
+# curl http://$(minikube ip):30080/congratulation
+#
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Проблема: Service не має endpoints
+# kubectl get endpoints orchestra-backend-service-production -n orchestra-space
+# Якщо ENDPOINTS порожній:
+# 1. Перевір selector в Service vs labels в Deployment
+#    kubectl get pods -n orchestra-space --show-labels
+# 2. Перевір чи Pod'и Ready
+#    kubectl get pods -n orchestra-space -l app=orchestra-backend-production
+# 3. Перевір readiness probe
+#    kubectl describe pod <pod-name> -n orchestra-space
+#
+# Проблема: Connection refused
+# 1. Перевір targetPort (має співпадати з containerPort)
+# 2. Перевір чи додаток слухає на правильному порту
+#    kubectl logs <pod-name> -n orchestra-space
+# 3. Перевір NetworkPolicy
+#    kubectl get networkpolicy -n orchestra-space
+#
+# Проблема: Requests йдуть тільки на 1 Pod
+# - Перевір sessionAffinity (має бути None для round-robin)
+# - Перевір чи всі Pod'и Ready
+# - Load balancer може кешувати connections
+#
+# Проблема: NodePort не працює
+# 1. Перевір firewall rules на Node
+# 2. Перевір чи port в range 30000-32767
+# 3. Для minikube: minikube service list
+#
+# =============================================================================

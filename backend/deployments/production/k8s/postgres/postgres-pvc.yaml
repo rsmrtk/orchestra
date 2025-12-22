@@ -1,0 +1,221 @@
+# =============================================================================
+# PERSISTENT VOLUME CLAIM (PVC) - Запит на постійне сховище
+# =============================================================================
+# ⚠️ ЦЕ КРИТИЧНО ВАЖЛИВО ДЛЯ БАЗ ДАНИХ!
+#
+# Що це?
+# PVC - це запит на виділення дискового простору для збереження даних.
+# Без PVC дані зберігаються в emptyDir і ВТРАЧАЮТЬСЯ при перезапуску Pod'а!
+#
+# Як працює?
+# 1. Створюєш PVC (цей файл) - запит на 10Gi диска
+# 2. Kubernetes шукає PersistentVolume (PV) який підходить
+# 3. Kubernetes "прив'язує" (bind) PVC до PV
+# 4. Pod монтує цей PVC як volume
+# 5. Дані зберігаються навіть після видалення Pod'а
+#
+# Storage Class - це "тип" диска:
+# - standard: HDD (повільний, дешевий)
+# - fast / ssd: SSD (швидкий, дорожчий)
+# - cloud providers мають свої: gp2/gp3 (AWS), pd-standard/pd-ssd (GCP)
+#
+# Access Modes:
+# - ReadWriteOnce (RWO): Один Node може писати/читати (найчастіше для БД)
+# - ReadOnlyMany (ROX): Багато Node можуть тільки читати
+# - ReadWriteMany (RWX): Багато Node можуть писати/читати (потрібен NFS/CephFS)
+# =============================================================================
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc-production
+  namespace: orchestra-space
+  labels:
+    app: postgres
+    component: database
+    environment: production
+spec:
+  # ---------------------------------------------------------------------------
+  # ACCESS MODE - як Pod'и можуть використовувати цей volume
+  # ---------------------------------------------------------------------------
+  accessModes:
+    - ReadWriteOnce              # RWO = тільки 1 Node може монтувати
+                                 # Підходить для PostgreSQL (1 replica)
+                                 # Якщо потрібна HA БД - використовуй StatefulSet
+
+  # ---------------------------------------------------------------------------
+  # STORAGE CLASS - тип диска
+  # ---------------------------------------------------------------------------
+  storageClassName: standard     # Зміни на свій storage class!
+                                 # Minikube: standard
+                                 # GKE: standard (HDD), pd-ssd (SSD)
+                                 # EKS: gp2 (default), gp3 (новіший, швидший)
+                                 # AKS: default, managed-premium
+
+  # Подивитися доступні storage classes:
+  # kubectl get storageclass
+
+  # ---------------------------------------------------------------------------
+  # RESOURCES - скільки дискового простору потрібно
+  # ---------------------------------------------------------------------------
+  resources:
+    requests:
+      storage: 10Gi              # Запит на 10Gi дискового простору
+                                 # Зміни в залежності від обсягу даних:
+                                 # - Dev/Staging: 5-10Gi
+                                 # - Production малий проект: 20-50Gi
+                                 # - Production середній: 100-500Gi
+                                 # - Production великий: 1Ti+
+
+  # ---------------------------------------------------------------------------
+  # VOLUME MODE (опціонально)
+  # ---------------------------------------------------------------------------
+  # volumeMode: Filesystem       # Filesystem (default) або Block
+                                 # Filesystem = монтується як файлова система
+                                 # Block = сирий блоковий пристрій (рідко)
+
+  # ---------------------------------------------------------------------------
+  # SELECTOR (опціонально) - вибрати конкретний PV по labels
+  # ---------------------------------------------------------------------------
+  # selector:
+  #   matchLabels:
+  #     type: fast-ssd
+  #   matchExpressions:
+  #     - key: environment
+  #       operator: In
+  #       values:
+  #         - production
+
+---
+# =============================================================================
+# ЯК ВИКОРИСТОВУВАТИ PVC В DEPLOYMENT
+# =============================================================================
+#
+# В postgres-deployment.yaml:
+#
+# volumes:
+#   - name: postgres-storage
+#     persistentVolumeClaim:
+#       claimName: postgres-pvc-production  # Ім'я цього PVC
+#
+# volumeMounts:
+#   - name: postgres-storage
+#     mountPath: /var/lib/postgresql/data  # Шлях в контейнері
+#
+# =============================================================================
+# ЖИТТЄВИЙ ЦИКЛ PVC
+# =============================================================================
+#
+# 1. Створення PVC:
+#    kubectl apply -f postgres-pvc.yaml
+#
+# 2. Перевірити статус:
+#    kubectl get pvc -n orchestra-space
+#    STATUS може бути:
+#    - Pending: чекає на bind до PV
+#    - Bound: успішно прив'язаний до PV
+#    - Lost: PV був видалений
+#
+# 3. Подивитися деталі:
+#    kubectl describe pvc postgres-pvc-production -n orchestra-space
+#
+# 4. Подивитися який PV використовується:
+#    kubectl get pvc postgres-pvc-production -n orchestra-space \
+#      -o jsonpath='{.spec.volumeName}'
+#
+# 5. Видалення PVC:
+#    kubectl delete pvc postgres-pvc-production -n orchestra-space
+#    ⚠️ УВАГА: Це може видалити всі дані! (залежить від reclaim policy)
+#
+# =============================================================================
+# RECLAIM POLICY - що станеться з даними після видалення PVC
+# =============================================================================
+#
+# Reclaim Policy встановлюється в PersistentVolume (не в PVC):
+#
+# - Retain: Дані зберігаються, PV стає Released (треба вручну чистити)
+#   Найбезпечніший варіант для production!
+#
+# - Delete: Дані і PV автоматично видаляються
+#   ⚠️ Небезпечно! Можна випадково втратити всі дані!
+#
+# - Recycle: Дані очищаються (rm -rf), PV стає Available
+#   Deprecated, не використовуй!
+#
+# Подивитися reclaim policy:
+# kubectl get pv
+#
+# Змінити reclaim policy (з Delete на Retain):
+# kubectl patch pv <pv-name> -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+#
+# =============================================================================
+# BACKUP & RESTORE
+# =============================================================================
+#
+# ⚠️ КРИТИЧНО: Завжди робити backup баз даних!
+#
+# Спосіб 1: pg_dump через Pod
+# kubectl exec -n orchestra-space <postgres-pod> -- \
+#   pg_dump -U rsmrtk orchestra-db > backup.sql
+#
+# Спосіб 2: Velero (backup PVC + Kubernetes resources)
+# velero backup create postgres-backup \
+#   --include-namespaces orchestra-space \
+#   --include-resources pvc,deployment
+#
+# Спосіб 3: Snapshot через Cloud Provider
+# (GCP Persistent Disk Snapshot, AWS EBS Snapshot, etc.)
+#
+# =============================================================================
+# МОНІТОРИНГ DISK USAGE
+# =============================================================================
+#
+# Подивитися використання диска:
+# kubectl exec -n orchestra-space <postgres-pod> -- df -h /var/lib/postgresql/data
+#
+# Alerts які треба налаштувати:
+# - Disk usage > 80% (warning)
+# - Disk usage > 90% (critical)
+# - PVC status != Bound
+# - PV reclaim policy != Retain (для production)
+#
+# =============================================================================
+# РОЗШИРЕННЯ PVC (VOLUME EXPANSION)
+# =============================================================================
+#
+# Деякі storage classes підтримують розширення PVC без downtime!
+#
+# 1. Перевірити чи підтримується:
+#    kubectl get storageclass standard -o jsonpath='{.allowVolumeExpansion}'
+#    # Має бути: true
+#
+# 2. Збільшити розмір PVC:
+#    kubectl edit pvc postgres-pvc-production -n orchestra-space
+#    # Змінити spec.resources.requests.storage: 20Gi
+#
+# 3. Kubernetes автоматично розширить volume
+#
+# 4. Для деяких file systems треба resize в Pod:
+#    kubectl exec -n orchestra-space <postgres-pod> -- resize2fs /dev/sdX
+#
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Проблема: PVC застряг в Pending
+# - Немає доступного PV
+# - Storage class не існує або неправильне ім'я
+# - Недостатньо місця на Node
+# - AccessMode не підтримується
+#
+# Проблема: Pod не може примонтувати PVC
+# - PVC в іншому namespace
+# - PVC вже примонтовано на іншому Node (для RWO)
+# - Permissions issue (fsGroup, runAsUser)
+#
+# Проблема: Дані втрачені після restart
+# - Використовувався emptyDir замість PVC
+# - PV був видалений (reclaim policy = Delete)
+# - Неправильний mountPath
+#
+# =============================================================================

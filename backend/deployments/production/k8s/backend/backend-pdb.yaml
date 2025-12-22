@@ -1,0 +1,309 @@
+# =============================================================================
+# PDB - Pod Disruption Budget (Захист від downtime)
+# =============================================================================
+# PDB гарантує що мінімальна кількість Pod'ів завжди залишається доступною
+# під час добровільних disruptions (оновлення, drain node, eviction).
+#
+# Навіщо це потрібно?
+# - Висока доступність під час rolling updates
+# - Захист від одночасного видалення всіх Pod'ів
+# - Контроль над тим скільки Pod'ів можна виключити одночасно
+# - Запобігти downtime під час maintenance кластера
+#
+# Що контролює PDB:
+# ✅ kubectl drain node (eviction Pod'ів з Node)
+# ✅ Cluster autoscaler (scale down Node)
+# ✅ kubectl delete pod (через eviction API)
+# ✅ Rolling updates (RollingUpdate strategy)
+#
+# Що НЕ контролює PDB:
+# ❌ Node crash (hardware failure)
+# ❌ OOMKilled (out of memory)
+# ❌ Pod crash (application bug)
+# ❌ kubectl delete pod --force
+# =============================================================================
+
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: orchestra-backend-pdb-production
+  namespace: orchestra-space
+  labels:
+    app: orchestra-backend
+    environment: production
+spec:
+  # ---------------------------------------------------------------------------
+  # SELECTOR - які Pod'и захищаються цим PDB
+  # ---------------------------------------------------------------------------
+  selector:
+    matchLabels:
+      app: orchestra-backend-production  # ⚠️ Має співпадати з labels в Deployment!
+
+  # ---------------------------------------------------------------------------
+  # DISRUPTION BUDGET - скільки Pod'ів має залишатися доступними
+  # ---------------------------------------------------------------------------
+
+  # Варіант 1: Мінімальна кількість доступних Pod'ів (використовуємо цей)
+  minAvailable: 2              # Мінімум 2 Pod'и завжди має працювати
+                               # З 3 реплік: можна drain/update тільки 1 одночасно
+                               # З 10 реплік (HPA max): можна drain/update 8 одночасно
+
+  # Варіант 2: Максимальна кількість недоступних Pod'ів (альтернатива)
+  # maxUnavailable: 1          # Максимум 1 Pod може бути недоступним
+                               # Ідентично minAvailable: 2 для 3 реплік
+                               # Але різниця при HPA scaling!
+
+  # ⚠️ ВАЖЛИВО: Використовуй АБО minAvailable АБО maxUnavailable (не обидва!)
+
+  # ---------------------------------------------------------------------------
+  # UNHEALTHY POD EVICTION POLICY
+  # ---------------------------------------------------------------------------
+  unhealthyPodEvictionPolicy: IfHealthyBudget  # Kubernetes 1.27+
+  # IfHealthyBudget (default): Видаляти unhealthy Pod тільки якщо PDB дозволяє
+  # AlwaysAllow: Завжди дозволяти видалення unhealthy Pod'ів (ігнорувати PDB)
+
+---
+# =============================================================================
+# ЯК ЦЕ ПРАЦЮЄ (ДЕТАЛЬНІ СЦЕНАРІЇ)
+# =============================================================================
+#
+# Сценарій 1: Rolling Update з 3 репліками
+# -----------------------------------------
+# Deployment: replicas: 3, maxUnavailable: 1, maxSurge: 1
+# PDB: minAvailable: 2
+#
+# Початок: 3 Pod'и v1 (Ready)
+#
+# Крок 1: Deployment створює 1 новий Pod v2 (maxSurge: 1)
+# └─> Тепер: 3 old + 1 new = 4 Pod'и
+# └─> PDB: 4 доступні >= 2 (minAvailable) ✅ OK
+#
+# Крок 2: Deployment хоче видалити 1 старий Pod
+# └─> Перевірка PDB: 4 - 1 = 3 >= 2 ✅ OK, eviction дозволено
+# └─> Pod v1 видаляється
+# └─> Тепер: 2 old + 1 new = 3 Pod'и
+#
+# Крок 3: Deployment створює 2-й новий Pod v2
+# └─> Тепер: 2 old + 2 new = 4 Pod'и
+#
+# Крок 4: Deployment хоче видалити 2-й старий Pod
+# └─> Перевірка PDB: 4 - 1 = 3 >= 2 ✅ OK
+# └─> Тепер: 1 old + 2 new = 3 Pod'и
+#
+# Крок 5: Deployment створює 3-й новий Pod v2
+# └─> Тепер: 1 old + 3 new = 4 Pod'і
+#
+# Крок 6: Deployment хоче видалити останній старий Pod
+# └─> Перевірка PDB: 4 - 1 = 3 >= 2 ✅ OK
+# └─> Фініш: 0 old + 3 new = 3 Pod'и v2
+#
+# Результат: Rolling Update пройшов успішно!
+# PDB гарантував що завжди мінімум 2 Pod'и доступні.
+#
+# -----------------------------------------
+# Сценарій 2: Node Drain (maintenance)
+# -----------------------------------------
+# Cluster: 3 Node, кожен має по 1 Pod backend
+# Node1: Pod A (Ready)
+# Node2: Pod B (Ready)
+# Node3: Pod C (Ready)
+# PDB: minAvailable: 2
+#
+# Admin виконує: kubectl drain node1
+#
+# Крок 1: Kubernetes хоче evict Pod A з Node1
+# └─> Перевірка PDB: 3 - 1 = 2 >= 2 ✅ OK, eviction дозволено
+# └─> Pod A gracefully terminated
+#
+# Крок 2: Deployment бачить що Pod A зник
+# └─> Створює новий Pod A' на Node2 або Node3
+#
+# Крок 3: Чекаємо поки Pod A' стане Ready
+# └─> Тепер: Pod A' (Ready), Pod B (Ready), Pod C (Ready)
+#
+# Крок 4: Node1 drained успішно
+#
+# Результат: Завжди мінімум 2 Pod'и були доступні під час drain!
+#
+# -----------------------------------------
+# Сценарій 3: Cluster Autoscaler Scale Down
+# -----------------------------------------
+# Cluster Autoscaler хоче видалити Node3 (low utilization)
+# Node3 має Pod C (Ready)
+#
+# Autoscaler перевіряє:
+# 1. Чи можна evict Pod C?
+# 2. Перевірка PDB: 3 - 1 = 2 >= 2 ✅ OK
+# 3. Evict Pod C
+# 4. Deployment створює Pod C' на іншому Node
+# 5. Чекає поки Pod C' Ready
+# 6. Видаляє Node3
+#
+# Результат: Безпечний scale down без downtime!
+#
+# -----------------------------------------
+# Сценарій 4: PDB блокує eviction (захист)
+# -----------------------------------------
+# Поточно: 2 Pod'и (Ready), 1 Pod (Not Ready - CrashLoopBackOff)
+# PDB: minAvailable: 2
+#
+# Admin виконує: kubectl drain node1 (має 1 Ready Pod)
+#
+# Крок 1: Kubernetes хоче evict Ready Pod
+# └─> Перевірка PDB: 2 Ready - 1 = 1 < 2 ❌ BLOCKED!
+# └─> Eviction відхилено
+# └─> Drain застряг, чекає поки з'явиться 3-й Ready Pod
+#
+# Admin бачить:
+# error when evicting pod: Cannot evict pod as it would violate the pod's disruption budget.
+#
+# Рішення:
+# 1. Почекати поки 3-й Pod стане Ready
+# 2. Або видалити PDB тимчасово (небезпечно!)
+# 3. Або kubectl delete pod --force (обережно!)
+#
+# Результат: PDB захистив від downtime!
+#
+# =============================================================================
+# ВЗАЄМОДІЯ З HPA
+# =============================================================================
+#
+# HPA + PDB працюють разом:
+#
+# HPA: minReplicas: 3, maxReplicas: 10
+# PDB: minAvailable: 2
+#
+# Scale Up (HPA 3 -> 10):
+# - PDB не блокує створення Pod'ів
+# - Завжди мінімум 2 Ready
+#
+# Scale Down (HPA 10 -> 3):
+# - HPA хоче видалити Pod'и
+# - Кожне видалення перевіряється PDB
+# - PDB гарантує що залишиться мінімум 2 Ready
+# - Scale down йде поступово (по 1 Pod за раз)
+#
+# Важливо: minAvailable має бути < minReplicas!
+# PDB: minAvailable: 2
+# HPA: minReplicas: 3
+# 3 >= 2 ✅ OK
+#
+# Якщо minAvailable >= minReplicas:
+# PDB: minAvailable: 5
+# HPA: minReplicas: 3
+# 3 < 5 ❌ ПРОБЛЕМА! PDB завжди блокуватиме eviction!
+#
+# =============================================================================
+# МОНІТОРИНГ
+# =============================================================================
+#
+# Перевірити PDB:
+# kubectl get pdb -n orchestra-space
+#
+# Вивід:
+# NAME                              MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+# orchestra-backend-pdb-production  2               N/A               1                     5m
+#                                   ↑               ↑                 ↑
+#                                   мінімум         або максимум      скільки можна drain зараз
+#
+# Подивитися статус:
+# kubectl describe pdb orchestra-backend-pdb-production -n orchestra-space
+#
+# Status:
+#   Current:           3    # Поточна кількість Pod'ів
+#   Desired:           2    # Бажана мінімальна кількість
+#   Allowed disruptions: 1  # Скільки Pod'ів можна drain зараз (3 - 2 = 1)
+#   Expected pods:     3    # Скільки Pod'ів очікується
+#
+# Якщо Allowed disruptions = 0:
+# - Не можна drain жодного Pod'а
+# - kubectl drain буде blocked
+# - Треба дочекатися поки більше Pod'ів стануть Ready
+#
+# =============================================================================
+# ТЕСТУВАННЯ PDB
+# =============================================================================
+#
+# Тест 1: Спробувати видалити Pod
+# --------------------------------
+# kubectl delete pod <pod-name> -n orchestra-space
+# (використовує eviction API, респектує PDB)
+#
+# Якщо PDB дозволяє: Pod видалиться
+# Якщо PDB блокує: error: Cannot evict pod...
+#
+# Тест 2: Спробувати drain Node (minikube)
+# -----------------------------------------
+# kubectl drain minikube --ignore-daemonsets --delete-emptydir-data
+#
+# PDB буде контролювати eviction Pod'ів
+# Drain може зайняти більше часу (чекає на Ready Pod'и)
+#
+# Тест 3: Rolling Update з невалідним image
+# ------------------------------------------
+# kubectl set image deployment/orchestra-backend-production \
+#   orchestra-backend-production=invalid:tag
+#
+# Нові Pod'и не стануть Ready
+# PDB захистить старі Pod'и від видалення
+# Rolling Update застряне (це добре!)
+#
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Проблема: Drain Node не працює (blocked)
+# kubectl drain <node> застряг
+# kubectl describe pdb -n orchestra-space
+# Дивись: Allowed disruptions: 0
+#
+# Причини:
+# 1. Недостатньо Ready Pod'ів
+#    kubectl get pods -n orchestra-space
+#    Рішення: Дочекатися поки Pod'и стануть Ready
+#
+# 2. minAvailable занадто високий
+#    minAvailable: 5, але тільки 3 Pod'и
+#    Рішення: Зменшити minAvailable або збільшити replicas
+#
+# 3. Selector неправильний
+#    PDB selector не співпадає з Pod labels
+#    Рішення: Виправити selector
+#
+# Проблема: Rolling Update застряг
+# kubectl rollout status deployment/orchestra-backend-production
+# Нові Pod'и не Ready, старі не видаляються
+#
+# Причини:
+# 1. Новий image невалідний (CrashLoopBackOff)
+# 2. PDB блокує видалення старих Pod'ів
+# 3. Недостатньо ресурсів для нових Pod'ів
+#
+# Рішення:
+# kubectl rollout undo deployment/orchestra-backend-production
+# (rollback до попередньої версії)
+#
+# Проблема: HPA не може scale down
+# HPA хоче зменшити replicas але застряг
+#
+# Причини:
+# 1. PDB блокує видалення Pod'ів
+# 2. minAvailable >= current replicas
+#
+# Рішення:
+# Перевірити: minAvailable < HPA minReplicas
+#
+# =============================================================================
+# BEST PRACTICES
+# =============================================================================
+#
+# 1. ✅ Завжди створюй PDB для production сервісів
+# 2. ✅ minAvailable = replicas - 1 (для 3 реплік -> minAvailable: 2)
+# 3. ✅ Або використовуй відсотки: minAvailable: 66% (2/3)
+# 4. ✅ minAvailable < HPA minReplicas (інакше HPA не зможе scale down)
+# 5. ✅ Тестуй PDB на staging (drain node)
+# 6. ✅ Моніторинг allowed disruptions
+# 7. ✅ PDB + HPA + RollingUpdate strategy мають бути узгоджені
+# 8. ✅ Для critical сервісів: minAvailable >= 2 (навіть якщо 1 Node падає)
+#
+# =============================================================================

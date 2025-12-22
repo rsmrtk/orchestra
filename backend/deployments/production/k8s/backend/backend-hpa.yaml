@@ -1,0 +1,280 @@
+# =============================================================================
+# HPA - Horizontal Pod Autoscaler (Автоматичне масштабування)
+# =============================================================================
+# HPA автоматично збільшує або зменшує кількість Pod'ів
+# базуючись на CPU/Memory utilization або custom metrics.
+#
+# Чому це важливо?
+# - Автоматична адаптація до навантаження
+# - Економія ресурсів (scale down коли мало трафіку)
+# - Висока доступність (scale up при зростанні трафіку)
+# - Не треба вручну змінювати replicas
+#
+# Вимоги:
+# 1. Metrics Server має бути встановлений в кластері
+# 2. Pod'и мають мати resources.requests вказані в Deployment
+# =============================================================================
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: orchestra-backend-hpa-production
+  namespace: orchestra-space
+  labels:
+    app: orchestra-backend
+    environment: production
+spec:
+  # ---------------------------------------------------------------------------
+  # SCALE TARGET - який ресурс масштабувати
+  # ---------------------------------------------------------------------------
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: orchestra-backend-production  # Ім'я Deployment який масштабуємо
+
+  # ---------------------------------------------------------------------------
+  # REPLICAS - мінімум і максимум Pod'ів
+  # ---------------------------------------------------------------------------
+  minReplicas: 3               # Мінімум 3 Pod'и (для high availability)
+                               # Навіть при 0% CPU буде 3 Pod'и
+  maxReplicas: 10              # Максимум 10 Pod'ів
+                               # При великому навантаженні може створити до 10
+
+  # HPA ніколи не піде за ці межі!
+
+  # ---------------------------------------------------------------------------
+  # METRICS - на основі чого масштабувати
+  # ---------------------------------------------------------------------------
+  metrics:
+  # Метрика #1: CPU Utilization (найчастіше використовується)
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70 # Масштабувати коли середній CPU > 70%
+
+  # Як це працює:
+  # 1. Поточно: 3 Pod'и, кожен використовує 200m CPU
+  # 2. requests.cpu в Deployment: 250m
+  # 3. Utilization = (200m / 250m) * 100% = 80%
+  # 4. 80% > 70% (target) -> HPA створює додаткові Pod'и
+  #
+  # Формула для розрахунку:
+  # desiredReplicas = ceil[currentReplicas * (currentMetric / targetMetric)]
+  # Приклад: ceil[3 * (80 / 70)] = ceil[3.43] = 4 Pod'и
+
+  # Метрика #2: Memory Utilization
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80 # Масштабувати коли середня пам'ять > 80%
+
+  # Обидві метрики працюють одночасно:
+  # HPA вибирає ту що дає більшу кількість реплік
+  # (краще мати зайві Pod'и ніж недостатньо)
+
+  # ---------------------------------------------------------------------------
+  # BEHAVIOR - контроль швидкості масштабування (Production settings)
+  # ---------------------------------------------------------------------------
+  behavior:
+    # Scale Up - збільшення кількості Pod'ів
+    scaleUp:
+      stabilizationWindowSeconds: 60   # Чекати 60 сек перед scale up
+                                       # Щоб не реагувати на короткі спайки
+      policies:
+      - type: Percent
+        value: 50                      # Збільшити максимум на 50%
+        periodSeconds: 60              # За 60 секунд
+      - type: Pods
+        value: 2                       # Або максимум +2 Pod'и
+        periodSeconds: 60              # За 60 секунд
+      selectPolicy: Max                # Вибрати більше значення
+
+    # Приклад Scale Up:
+    # Поточно: 3 Pod'и, CPU 80%
+    # Policy 1: 3 * 50% = 1.5 -> 2 Pod'и (максимум можна додати)
+    # Policy 2: +2 Pod'и
+    # selectPolicy: Max -> вибрати 2 Pod'и
+    # Результат: 3 + 2 = 5 Pod'ів
+
+    # Scale Down - зменшення кількості Pod'ів
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Чекати 5 хвилин перед scale down
+                                       # Довше ніж scale up!
+                                       # Краще мати зайві Pod'и ніж downtime
+      policies:
+      - type: Percent
+        value: 25                      # Зменшити максимум на 25%
+        periodSeconds: 60              # За 60 секунд
+      - type: Pods
+        value: 1                       # Або максимум -1 Pod
+        periodSeconds: 60              # За 60 секунд
+      selectPolicy: Min                # Вибрати менше значення (обережно!)
+
+    # Приклад Scale Down:
+    # Поточно: 10 Pod'ів, CPU 20%
+    # Policy 1: 10 * 25% = 2.5 -> 2 Pod'и (максимум можна видалити)
+    # Policy 2: -1 Pod
+    # selectPolicy: Min -> вибрати 1 Pod
+    # Результат: 10 - 1 = 9 Pod'ів (обережно зменшуємо)
+
+---
+# =============================================================================
+# ЯК ЦЕ ПРАЦЮЄ (ДЕТАЛЬНИЙ АЛГОРИТМ)
+# =============================================================================
+#
+# HPA Controller виконується кожні 15 секунд (default):
+#
+# 1. Metrics Server збирає метрики з всіх Pod'ів
+#    Pod 1: CPU 180m / 250m = 72%
+#    Pod 2: CPU 200m / 250m = 80%
+#    Pod 3: CPU 150m / 250m = 60%
+#
+# 2. HPA обчислює середнє:
+#    Average CPU = (72 + 80 + 60) / 3 = 70.67%
+#
+# 3. Порівнює з target (70%):
+#    70.67% > 70% -> потрібно scale up
+#
+# 4. Обчислює потрібну кількість реплік:
+#    desiredReplicas = ceil[3 * (70.67 / 70)] = ceil[3.03] = 4 Pod'и
+#
+# 5. Перевіряє behavior.scaleUp.policies:
+#    - Percent: 3 + (3 * 50%) = 4.5 -> 4 Pod'и max
+#    - Pods: 3 + 2 = 5 Pod'ів max
+#    - selectPolicy: Max -> 5 Pod'ів
+#    Але desired = 4, тому створить тільки 4
+#
+# 6. Чекає stabilizationWindowSeconds (60 сек)
+#    Якщо протягом 60 сек CPU залишається > 70% -> створює 4-й Pod
+#
+# 7. Оновлює Deployment.spec.replicas = 4
+#
+# 8. Deployment Controller створює 4-й Pod
+#
+# 9. Після startup + readiness -> Pod приймає трафік
+#
+# 10. Метрики перераховуються з 4 Pod'ами
+#
+# =============================================================================
+# ВСТАНОВЛЕННЯ METRICS SERVER
+# =============================================================================
+#
+# HPA потребує Metrics Server для отримання CPU/Memory метрик!
+#
+# Перевірити чи встановлений:
+# kubectl get deployment metrics-server -n kube-system
+#
+# Якщо немає - встановити:
+# kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+#
+# Для minikube:
+# minikube addons enable metrics-server
+#
+# Перевірити чи працює:
+# kubectl top nodes           # Метрики Node'ів
+# kubectl top pods -n orchestra-space  # Метрики Pod'ів
+#
+# Якщо kubectl top не працює -> Metrics Server не працює!
+#
+# =============================================================================
+# МОНІТОРИНГ HPA
+# =============================================================================
+#
+# Перевірити статус HPA:
+# kubectl get hpa -n orchestra-space
+#
+# Вивід:
+# NAME                              REFERENCE                             TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
+# orchestra-backend-hpa-production  Deployment/orchestra-backend-production  45%/70%, 60%/80%   3         10        3          5m
+#                                                                          ↑ current/target
+#
+# Подивитися деталі:
+# kubectl describe hpa orchestra-backend-hpa-production -n orchestra-space
+#
+# Дивитися в реальному часі:
+# kubectl get hpa orchestra-backend-hpa-production -n orchestra-space --watch
+#
+# Events (побачити коли HPA масштабував):
+# kubectl describe hpa orchestra-backend-hpa-production -n orchestra-space | grep Events -A 20
+#
+# =============================================================================
+# ТЕСТУВАННЯ HPA
+# =============================================================================
+#
+# Створити навантаження для тестування scale up:
+#
+# 1. Встановити Apache Bench:
+#    sudo apt-get install apache2-utils
+#
+# 2. Створити навантаження:
+#    # 100000 requests, 100 concurrent connections
+#    ab -n 100000 -c 100 http://$(minikube ip):30080/congratulation
+#
+# 3. Дивитися як HPA масштабує:
+#    kubectl get hpa -n orchestra-space --watch
+#
+# 4. Дивитися створення Pod'ів:
+#    kubectl get pods -n orchestra-space -l app=orchestra-backend-production --watch
+#
+# 5. Після закінчення навантаження - дивись scale down (через 5 хв)
+#
+# Альтернатива - hey tool:
+# go install github.com/rakyll/hey@latest
+# hey -z 5m -c 50 http://$(minikube ip):30080/congratulation
+#
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Проблема: HPA показує <unknown> для метрик
+# kubectl describe hpa orchestra-backend-hpa-production -n orchestra-space
+# Причини:
+# 1. Metrics Server не встановлений або не працює
+#    Рішення: kubectl apply -f metrics-server.yaml
+# 2. Pod'и не мають resources.requests
+#    Рішення: Додати resources.requests в Deployment
+# 3. Pod'и ще не Ready
+#    Рішення: Дочекатися поки Pod'и стануть Ready
+#
+# Проблема: HPA не масштабує
+# 1. Перевір чи метрики доступні:
+#    kubectl top pods -n orchestra-space
+# 2. Перевір чи current > target:
+#    kubectl get hpa -n orchestra-space
+# 3. Перевір behavior (можливо stabilizationWindow ще чекає)
+# 4. Перевір чи є вільні ресурси на Node'ах
+# 5. Перевір PDB (можливо блокує scale down)
+#
+# Проблема: HPA масштабує занадто агресивно
+# - Збільш stabilizationWindowSeconds
+# - Зменш policies.value
+# - Збільш target utilization
+#
+# Проблема: HPA масштабує занадто повільно
+# - Зменш stabilizationWindowSeconds
+# - Збільш policies.value
+# - Зменш target utilization
+#
+# Проблема: Метрики стрибають (flapping)
+# - Збільш stabilizationWindowSeconds
+# - Додай більше resources.limits (уникнути throttling)
+# - Перевір чи немає memory leaks
+#
+# =============================================================================
+# BEST PRACTICES
+# =============================================================================
+#
+# 1. ✅ minReplicas >= 2 для high availability
+# 2. ✅ target utilization: 70-80% (не 50%, не 90%)
+# 3. ✅ scaleUp.stabilizationWindow < scaleDown (швидше up, повільніше down)
+# 4. ✅ Тестуй HPA на staging перед production
+# 5. ✅ Моніторинг HPA events (Prometheus alerts)
+# 6. ✅ Використовуй обидві метрики (CPU + Memory)
+# 7. ✅ Додай PDB щоб захистити від занадто швидкого scale down
+# 8. ✅ resources.requests має бути realistic (не занадто малі/великі)
+#
+# =============================================================================

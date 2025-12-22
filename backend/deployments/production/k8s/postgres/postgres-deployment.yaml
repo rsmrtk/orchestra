@@ -1,0 +1,279 @@
+# =============================================================================
+# POSTGRES DEPLOYMENT - База даних для Orchestra Backend (PRODUCTION)
+# =============================================================================
+# Це ВИПРАВЛЕНА версія твого postgres.yaml з критичними змінами:
+# 1. ✅ Використовує PersistentVolumeClaim замість emptyDir
+# 2. ✅ Паролі з Secret замість plain text
+# 3. ✅ Збільшені resources (1-2Gi RAM)
+# 4. ✅ Додані production-ready налаштування
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestra-db-production
+  namespace: orchestra-space
+  labels:
+    app: postgres
+    component: database
+    environment: production
+spec:
+  # ---------------------------------------------------------------------------
+  # REPLICAS - кількість Pod'ів
+  # ---------------------------------------------------------------------------
+  replicas: 1                    # PostgreSQL: завжди 1 replica для single instance
+                                 # Для HA (high availability) використовуй:
+                                 # - StatefulSet з streaming replication
+                                 # - Cloud managed DB (RDS, Cloud SQL)
+                                 # - Patroni/Stolon для автоматичного failover
+
+  # ---------------------------------------------------------------------------
+  # SELECTOR - як знайти Pod'и які належать цьому Deployment
+  # ---------------------------------------------------------------------------
+  selector:
+    matchLabels:
+      app: postgres
+      component: database
+
+  # ---------------------------------------------------------------------------
+  # STRATEGY - як оновлювати Pod'и
+  # ---------------------------------------------------------------------------
+  strategy:
+    type: Recreate               # Recreate = спочатку видалити старий, потім створити новий
+                                 # Для БД не можна використовувати RollingUpdate
+                                 # тому що:
+                                 # 1. PVC з ReadWriteOnce може бути на 1 Node
+                                 # 2. Два Pod'и не можуть писати в одну БД одночасно
+
+  # ---------------------------------------------------------------------------
+  # POD TEMPLATE - шаблон для створення Pod'ів
+  # ---------------------------------------------------------------------------
+  template:
+    metadata:
+      labels:
+        app: postgres
+        component: database
+        environment: production
+    spec:
+      # -------------------------------------------------------------------------
+      # SECURITY CONTEXT - налаштування безпеки для Pod
+      # -------------------------------------------------------------------------
+      securityContext:
+        fsGroup: 999             # Group ID для файлів в volume (postgres user = 999)
+                                 # Це дозволяє postgres писати в /var/lib/postgresql/data
+
+      # -------------------------------------------------------------------------
+      # CONTAINERS - контейнери в Pod
+      # -------------------------------------------------------------------------
+      containers:
+      - name: postgres
+        image: postgres:17       # Стабільна версія PostgreSQL
+                                 # Можна вказати конкретний patch: postgres:17.2
+        imagePullPolicy: IfNotPresent
+
+        # -----------------------------------------------------------------------
+        # ENVIRONMENT VARIABLES - змінні середовища
+        # -----------------------------------------------------------------------
+        env:
+        # Ім'я бази даних
+        - name: POSTGRES_DB
+          value: "orchestra-db"
+
+        # Username (з Secret для безпеки)
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: orchestra-backend-secret
+              key: DB_USER
+
+        # ⚠️ Password (з Secret, НЕ plain text!)
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: orchestra-backend-secret
+              key: DB_PASSWORD
+
+        # Шлях до даних всередині контейнера
+        # /var/lib/postgresql/data = default для postgres
+        # /pgdata = subdirectory щоб уникнути конфліктів з mount point
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+
+        # Додаткові налаштування PostgreSQL (опціонально)
+        - name: POSTGRES_INITDB_ARGS
+          value: "--encoding=UTF8 --locale=uk_UA.UTF-8"
+
+        # -----------------------------------------------------------------------
+        # PORTS - порти які слухає контейнер
+        # -----------------------------------------------------------------------
+        ports:
+        - containerPort: 5432
+          name: postgres
+          protocol: TCP
+
+        # -----------------------------------------------------------------------
+        # VOLUME MOUNTS - монтування volumes в контейнер
+        # -----------------------------------------------------------------------
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data  # Шлях де postgres зберігає дані
+                                                # ⚠️ Дуже важливо для збереження даних!
+
+        # -----------------------------------------------------------------------
+        # LIVENESS PROBE - чи живий контейнер?
+        # -----------------------------------------------------------------------
+        # Якщо liveness probe fails - Kubernetes вб'є і перезапустить Pod
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready          # PostgreSQL команда для перевірки готовності
+            - -U
+            - rsmrtk              # Username для перевірки
+            - -d
+            - orchestra-db        # Database name для перевірки
+          initialDelaySeconds: 30 # Чекати 30 сек після старту Pod'а
+          periodSeconds: 10       # Перевіряти кожні 10 сек
+          timeoutSeconds: 5       # Чекати 5 сек на відповідь
+          failureThreshold: 3     # 3 невдалі спроби = Pod буде вбитий
+
+        # -----------------------------------------------------------------------
+        # READINESS PROBE - чи готовий контейнер приймати трафік?
+        # -----------------------------------------------------------------------
+        # Якщо readiness probe fails - Pod виключається з Service endpoints
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - rsmrtk
+            - -d
+            - orchestra-db
+          initialDelaySeconds: 5  # Швидше ніж liveness (БД може бути ready раніше)
+          periodSeconds: 5        # Частіше перевіряти
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+        # -----------------------------------------------------------------------
+        # RESOURCES - CPU та Memory
+        # -----------------------------------------------------------------------
+        # ⚠️ ВИПРАВЛЕНО: Збільшено resources для production!
+        resources:
+          requests:
+            memory: "1Gi"         # Гарантовано 1Gi RAM
+            cpu: "500m"           # Гарантовано 0.5 CPU cores
+          limits:
+            memory: "2Gi"         # Максимум 2Gi RAM
+            cpu: "1000m"          # Максимум 1 CPU core
+
+        # Рекомендації для різних навантажень:
+        # Low traffic (< 10 users): 512Mi-1Gi RAM, 250m-500m CPU
+        # Medium traffic (10-100 users): 1-2Gi RAM, 500m-1000m CPU
+        # High traffic (100-1000 users): 4-8Gi RAM, 2-4 CPU
+        # Very high (1000+ users): 16-32Gi RAM, 8+ CPU + replication
+
+      # -------------------------------------------------------------------------
+      # VOLUMES - де зберігати дані
+      # -------------------------------------------------------------------------
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc-production  # ⚠️ ВИПРАВЛЕНО: PVC замість emptyDir!
+                                              # Тепер дані НЕ втратяться при restart!
+
+---
+# =============================================================================
+# ЯК ЦЕ ПРАЦЮЄ (LIFECYCLE)
+# =============================================================================
+#
+# 1. kubectl apply -f postgres-deployment.yaml
+#    └─> Kubernetes створює Deployment
+#
+# 2. Deployment створює ReplicaSet
+#    └─> ReplicaSet створює 1 Pod (replicas: 1)
+#
+# 3. Pod запускається на Node:
+#    ├─> Scheduler вибирає Node де є вільні ресурси (1Gi RAM, 0.5 CPU)
+#    ├─> Kubelet на Node pull'ить image postgres:17
+#    └─> Kubelet створює контейнер
+#
+# 4. Volume mount:
+#    ├─> Kubernetes bind'ить PVC до PV
+#    ├─> PV монтується на Node (наприклад /mnt/disks/vol1)
+#    └─> Volume монтується в контейнер як /var/lib/postgresql/data
+#
+# 5. Container startup:
+#    ├─> PostgreSQL ініціалізується (якщо перший раз)
+#    ├─> Створюється database "orchestra-db"
+#    ├─> Створюється user "rsmrtk" з паролем з Secret
+#    └─> PostgreSQL слухає на port 5432
+#
+# 6. Readiness probe:
+#    ├─> Kubernetes чекає 5 sec (initialDelaySeconds)
+#    ├─> Виконує pg_isready кожні 5 sec
+#    └─> Коли pg_isready повертає OK -> Pod стає Ready
+#
+# 7. Service endpoints:
+#    └─> Коли Pod Ready, його IP додається до Service endpoints
+#        Backend тепер може підключитися до БД через Service
+#
+# =============================================================================
+# МОНІТОРИНГ
+# =============================================================================
+#
+# Перевірити статус Deployment:
+# kubectl get deployment orchestra-db-production -n orchestra-space
+#
+# Перевірити статус Pod'ів:
+# kubectl get pods -n orchestra-space -l app=postgres
+#
+# Подивитися логи:
+# kubectl logs -n orchestra-space -l app=postgres -f
+#
+# Зайти в PostgreSQL shell:
+# kubectl exec -it -n orchestra-space <pod-name> -- psql -U rsmrtk -d orchestra-db
+#
+# Перевірити використання ресурсів:
+# kubectl top pod -n orchestra-space -l app=postgres
+#
+# Подивитися використання диска:
+# kubectl exec -n orchestra-space <pod-name> -- df -h /var/lib/postgresql/data
+#
+# =============================================================================
+# BACKUP & MAINTENANCE
+# =============================================================================
+#
+# Backup database:
+# kubectl exec -n orchestra-space <pod-name> -- \
+#   pg_dump -U rsmrtk orchestra-db > backup-$(date +%Y%m%d).sql
+#
+# Restore database:
+# kubectl exec -i -n orchestra-space <pod-name> -- \
+#   psql -U rsmrtk -d orchestra-db < backup-20241222.sql
+#
+# Vacuum (очистити мертві записи):
+# kubectl exec -n orchestra-space <pod-name> -- \
+#   psql -U rsmrtk -d orchestra-db -c "VACUUM FULL ANALYZE;"
+#
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Проблема: Pod не стартує
+# kubectl describe pod <pod-name> -n orchestra-space
+# - Перевір PVC (чи Bound?)
+# - Перевір resources (чи достатньо на Node?)
+# - Перевір Secret (чи існує?)
+#
+# Проблема: Не можу підключитися до БД
+# - Перевір чи Pod Ready: kubectl get pods
+# - Перевір Service: kubectl get svc orchestra-db
+# - Перевір паролі в Secret
+# - Подивись логи: kubectl logs <pod-name>
+#
+# Проблема: Повільна БД
+# - Збільш resources (CPU/RAM)
+# - Налаштуй PostgreSQL конфіги (shared_buffers, work_mem)
+# - Додай indexes в таблиці
+# - Використай connection pooling (PgBouncer)
+#
+# =============================================================================
