@@ -1,7 +1,11 @@
+# Production-ready docker-compose
+# Usage: docker compose -f docker-compose.prod.yml up -d
+
 services:
   postgres:
     image: postgres:17
-    container_name: orchestra-db
+    container_name: orchestra-db-prod
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-orchestra-db}
       POSTGRES_USER: ${DB_USER:-rsmrtk}
@@ -9,25 +13,26 @@ services:
     ports:
       - "${DB_PORT:-2828}:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ../../pkg/dbmodel/db.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data_prod:/var/lib/postgresql/data
+      - ./backend/pkg/dbmodel/db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - orchestra-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-rsmrtk} -d ${DB_NAME:-orchestra-db}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-    restart: unless-stopped
-    networks:
-      - orchestra-network
 
   backend:
     build:
-      context: ../..
+      context: ./backend
       dockerfile: deployments/production/Dockerfile
-    container_name: orchestra-backend-production
-    ports:
-      - "${BACKEND_PORT:-8383}:8282"
+    container_name: orchestra-backend-prod
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       GIN_MODE: ${GIN_MODE:-release}
       DB_HOST: postgres
@@ -38,39 +43,41 @@ services:
       PORT: 8282
       JWT_SECRET: ${JWT_SECRET:-7mAqQ8xLqD5pXj3uQfL2HvT8sYcR0NwBvPeHgU4o}
       JWT_DURATION: ${JWT_DURATION:-24h}
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
+    ports:
+      - "${BACKEND_PORT:-8383}:8282"
+    networks:
+      - orchestra-network
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8282/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-    networks:
-      - orchestra-network
 
   frontend:
     build:
-      context: ../../../frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_API_URL: http://localhost:${BACKEND_PORT:-8383}
-    container_name: orchestra-frontend-production
-    ports:
-      - "${FRONTEND_PORT:-5252}:5252"
+      context: ./frontend
+      dockerfile: deployments/production/Dockerfile
+    container_name: orchestra-frontend-prod
+    restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
-    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
     networks:
       - orchestra-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
 networks:
   orchestra-network:
     driver: bridge
 
 volumes:
-  postgres-data:
+  postgres_data_prod:
     driver: local
