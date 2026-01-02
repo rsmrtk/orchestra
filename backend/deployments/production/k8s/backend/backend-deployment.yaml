@@ -158,7 +158,7 @@ spec:
             port: 8282
           initialDelaySeconds: 10  # Чекати 10 сек після старту
           periodSeconds: 5         # Перевіряти кожні 5 сек
-          timeoutSeconds: 3
+          timeoutSeconds: 58
           failureThreshold: 12     # 12 спроб * 5 сек = 60 сек максимум на старт
                                    # Якщо за 60 сек не стартував -> Pod killed
 
