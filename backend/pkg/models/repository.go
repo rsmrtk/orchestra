@@ -89,3 +89,5 @@ func (r *customerRepo) Exists(ctx context.Context, firstName, lastName string) (
 		LastName:  lastName,
 	})
 }
+
+//this repo for fun
