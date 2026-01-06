@@ -169,10 +169,11 @@
     </list>
     <recent_temporary>
       <list>
-        <item itemvalue="Docker.docker-compose.yml: Compose Deployment" />
-        <item itemvalue="Docker.production: Compose Deployment" />
-        <item itemvalue="Docker.production/Dockerfile" />
         <item itemvalue="Docker.staging.backend: Compose Deployment" />
+        <item itemvalue="Docker.production/Dockerfile" />
+        <item itemvalue="Docker.production: Compose Deployment" />
+        <item itemvalue="Docker.docker-compose.yml: Compose Deployment" />
+        <item itemvalue="Docker.docker-compose.yml: Compose Deployment" />
       </list>
     </recent_temporary>
   </component>
