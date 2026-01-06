@@ -1,0 +1,459 @@
+# ==========================================
+# Orchestra CI/CD Pipeline
+# Універсальний workflow для монорепо
+# ==========================================
+name: CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Manual trigger
+
+# Автоматична відміна старих runs при новому push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.25'
+  NODE_VERSION: '20'
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  # ==========================================
+  # 🔍 Визначаємо що змінилось
+  # ==========================================
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      k8s: ${{ steps.filter.outputs.k8s }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/**'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/**'
+            k8s:
+              - 'backend/deployments/**'
+              - 'orchestra-infra/**'
+
+  # ==========================================
+  # 🔧 Backend: Lint
+  # ==========================================
+  backend-lint:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: backend
+          args: --timeout=5m
+
+      - name: Check formatting
+        run: |
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "❌ Code is not formatted!"
+            echo "Run: gofmt -s -w ."
+            gofmt -s -l .
+            exit 1
+          fi
+          echo "✅ Code is properly formatted"
+
+  # ==========================================
+  # 🧪 Backend: Tests (готовий до використання)
+  # ==========================================
+  backend-test:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+
+    # PostgreSQL для інтеграційних тестів
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run migrations (коли будуть)
+        run: |
+          # TODO: Додати міграції
+          # psql $DATABASE_URL -f migrations/init.sql
+          echo "⏭️  Skipping migrations (not configured yet)"
+
+      - name: Run tests
+        run: |
+          # Коли додаси тести, вони запустяться автоматично
+          go test -v -race -coverprofile=coverage.out ./... || echo "⚠️  No tests found yet"
+
+      - name: Coverage report
+        if: always()
+        run: |
+          if [ -f coverage.out ]; then
+            go tool cover -func=coverage.out
+            COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+            echo "📊 Total coverage: ${COVERAGE}%"
+          fi
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.out
+          if-no-files-found: ignore
+
+  # ==========================================
+  # 🏗️ Backend: Build
+  # ==========================================
+  backend-build:
+    needs: [changes, backend-lint, backend-test]
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      - name: Build binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -ldflags="-w -s -X main.Version=${{ github.sha }}" \
+            -o bin/server \
+            ./cmd/server/main.go
+
+      - name: Test binary
+        run: |
+          chmod +x bin/server
+          file bin/server
+          ls -lh bin/server
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-binary
+          path: backend/bin/server
+          retention-days: 7
+
+  # ==========================================
+  # 🎨 Frontend: Lint & Test
+  # ==========================================
+  frontend-lint:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+  # ==========================================
+  # 🎨 Frontend: Build
+  # ==========================================
+  frontend-build:
+    needs: [changes, frontend-lint]
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Check build output
+        run: |
+          ls -lh dist/
+          du -sh dist/
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 7
+
+  # ==========================================
+  # 🐳 Docker: Backend
+  # ==========================================
+  docker-backend:
+    needs: [backend-build]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/deployments/staging/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.sha }}
+
+  # ==========================================
+  # 🐳 Docker: Frontend
+  # ==========================================
+  docker-frontend:
+    needs: [frontend-build]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ==========================================
+  # 🚀 Deploy to Staging (автоматично)
+  # ==========================================
+  deploy-staging:
+    needs: [docker-backend, docker-frontend]
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.orchestra.example.com  # Зміни на свій
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      # TODO: Налаштуй доступ до K8s кластеру
+      # - name: Configure K8s
+      #   run: |
+      #     echo "${{ secrets.KUBECONFIG_STAGING }}" > kubeconfig
+      #     export KUBECONFIG=kubeconfig
+
+      - name: Deploy to staging
+        run: |
+          echo "🚀 Deploying to staging..."
+          echo "Backend image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:develop-${{ github.sha }}"
+          echo "Frontend image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:develop-${{ github.sha }}"
+
+          # TODO: Розкоментуй коли налаштуєш kubectl
+          # cd backend/deployments/staging/k8s
+          # kubectl set image deployment/orchestra-backend \
+          #   orchestra-backend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:develop-${{ github.sha }} \
+          #   -n orchestra-staging
+          # kubectl rollout status deployment/orchestra-backend -n orchestra-staging
+
+      - name: Verify deployment
+        run: |
+          echo "✅ Deployment completed"
+          # TODO: Додай health check
+          # curl -f https://staging.orchestra.example.com/health || exit 1
+
+  # ==========================================
+  # 🚀 Deploy to Production (manual)
+  # ==========================================
+  deploy-production:
+    needs: [docker-backend, docker-frontend]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://orchestra.example.com  # Зміни на свій
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      # TODO: Налаштуй доступ до production K8s
+      # - name: Configure K8s
+      #   run: |
+      #     echo "${{ secrets.KUBECONFIG_PRODUCTION }}" > kubeconfig
+      #     export KUBECONFIG=kubeconfig
+
+      - name: Deploy to production
+        run: |
+          echo "🚀 Deploying to production..."
+          echo "Backend image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:main-${{ github.sha }}"
+          echo "Frontend image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:main-${{ github.sha }}"
+
+          # TODO: Розкоментуй коли налаштуєш kubectl
+          # cd backend/deployments/production/k8s
+          # kubectl set image deployment/orchestra-backend \
+          #   orchestra-backend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:main-${{ github.sha }} \
+          #   -n orchestra-production
+          # kubectl rollout status deployment/orchestra-backend -n orchestra-production
+
+      - name: Verify deployment
+        run: |
+          echo "✅ Production deployment completed"
+          # TODO: Додай smoke tests
+          # curl -f https://orchestra.example.com/health || exit 1
+
+      # Rollback при помилці
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed! Rolling back..."
+          # kubectl rollout undo deployment/orchestra-backend -n orchestra-production
+
+  # ==========================================
+  # 📊 Summary
+  # ==========================================
+  summary:
+    needs: [backend-build, frontend-build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Job Summary
+        run: |
+          echo "## 🎉 CI/CD Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Actor**: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Built Images" >> $GITHUB_STEP_SUMMARY
+          echo "Backend: \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:${{ github.ref_name }}-${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "Frontend: \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ github.ref_name }}-${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY

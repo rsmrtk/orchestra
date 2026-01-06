@@ -1,0 +1,85 @@
+# ==========================================
+# Dependency Security Check
+# Перевіряє залежності на вразливості
+# ==========================================
+name: Dependency Check
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  schedule:
+    - cron: '0 0 * * 0'  # Щотижня в неділю о 00:00
+  workflow_dispatch:
+
+jobs:
+  # ==========================================
+  # 🔒 Backend Dependencies (Go)
+  # ==========================================
+  backend-deps:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: backend/go.sum
+
+      # Перевірка на вразливості
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      # Перевірка outdated dependencies
+      - name: Check for updates
+        run: |
+          echo "## 📦 Backend Dependencies" >> $GITHUB_STEP_SUMMARY
+          go list -u -m all | grep '\[' || echo "✅ All dependencies up to date" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================
+  # 🔒 Frontend Dependencies (npm)
+  # ==========================================
+  frontend-deps:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      # npm audit
+      - name: npm audit
+        run: |
+          npm audit --audit-level=moderate || true
+          echo "## 📦 Frontend Dependencies" >> $GITHUB_STEP_SUMMARY
+
+      # Перевірка outdated
+      - name: Check for updates
+        run: |
+          npm outdated || true
+
+  # ==========================================
+  # 🔍 Dependency Review (PR only)
+  # ==========================================
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
