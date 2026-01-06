@@ -80,8 +80,10 @@ func (a *App) initDB(ctx context.Context) error {
 	// Парсимо конфігурацію
 	config, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
+		log.Printf("ERROR: Failed to parse database config: %v", err)
 		return fmt.Errorf("failed to parse database config: %w", err)
 	}
+	log.Println("Database config parsed successfully")
 
 	// Налаштовуємо connection pool
 	config.MaxConns = 25
@@ -89,16 +91,28 @@ func (a *App) initDB(ctx context.Context) error {
 	config.MaxConnLifetime = 5 * time.Minute
 	config.MaxConnIdleTime = 90 * time.Second
 
-	// Створюємо pool
-	a.db, err = pgxpool.NewWithConfig(ctx, config)
+	// Створюємо pool з timeout
+	log.Println("Creating database connection pool...")
+	connectCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	a.db, err = pgxpool.NewWithConfig(connectCtx, config)
 	if err != nil {
+		log.Printf("ERROR: Failed to create connection pool: %v", err)
 		return fmt.Errorf("failed to create connection pool: %w", err)
 	}
+	log.Println("Connection pool created successfully")
 
-	// Перевіряємо з'єднання
-	if err := a.db.Ping(ctx); err != nil {
+	// Перевіряємо з'єднання з timeout
+	log.Println("Pinging database...")
+	pingCtx, pingCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer pingCancel()
+
+	if err := a.db.Ping(pingCtx); err != nil {
+		log.Printf("ERROR: Failed to ping database: %v", err)
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
+	log.Println("Database ping successful!")
 
 	log.Println("Successfully connected to PostgreSQL!")
 	return nil

@@ -156,11 +156,11 @@ spec:
           httpGet:
             path: /congratulation
             port: 8282
-          initialDelaySeconds: 10  # Чекати 10 сек після старту
-          periodSeconds: 5         # Перевіряти кожні 5 сек
-          timeoutSeconds: 58
-          failureThreshold: 12     # 12 спроб * 5 сек = 60 сек максимум на старт
-                                   # Якщо за 60 сек не стартував -> Pod killed
+          initialDelaySeconds: 15  # Чекати 15 сек після старту
+          periodSeconds: 10        # Перевіряти кожні 10 сек
+          timeoutSeconds: 5
+          failureThreshold: 30     # 30 спроб * 10 сек = 300 сек (5 хв) максимум на старт
+                                   # Якщо за 5 хв не стартував -> Pod killed
 
         # -----------------------------------------------------------------------
         # LIVENESS PROBE - чи живий додаток?

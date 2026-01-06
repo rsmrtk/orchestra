@@ -125,7 +125,7 @@ spec:
           component: database
     ports:
     - protocol: TCP
-      port: 5432               # PostgreSQL port
+      port: 5432               # PostgreSQL container port (внутрішній)
 
   # Rule #3: Дозволити HTTPS до зовнішніх API (опціонально)
   # Якщо backend потребує викликати зовнішні сервіси
