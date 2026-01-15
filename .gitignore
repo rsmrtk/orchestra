@@ -1,4 +1,5 @@
 .env
+.env.prod
 .idea/
 *.swp
 *.swo
