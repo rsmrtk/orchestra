@@ -63,8 +63,8 @@ CREATE TABLE "orchestra-table" (
 ```bash
 export DB_HOST=localhost
 export DB_PORT=5432
-export DB_USER=rsmrtk
-export DB_PASSWORD=your_password
+export DB_USER=your_db_username
+export DB_PASSWORD=your_secure_password
 export DB_NAME=orchestra
 export PORT=8282
 ```

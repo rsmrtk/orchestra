@@ -5,15 +5,18 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="72b24830-d696-4caa-bf87-68858609ace4" name="Changes" comment="reworking new deployments models">
-      <change afterPath="$PROJECT_DIR$/orchestra-workflow/.github/workflows/ci.yml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/orchestra-workflow/.github/workflows/dependency-check.yml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/orchestra-workflow/.github/workflows/release.yml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/orchestra-workflow/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.env.prod" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/deployments/production/k8s/backend/backend-deployment.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/backend/deployments/production/k8s/backend/backend-deployment.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/deployments/production/k8s/network-policy.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/backend/deployments/production/k8s/network-policy.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/internal/app/app.go" beforeDir="false" afterPath="$PROJECT_DIR$/backend/internal/app/app.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/QUICK_START.md" beforeDir="false" afterPath="$PROJECT_DIR$/QUICK_START.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/deployments/production/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/backend/deployments/production/docker-compose.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/deployments/production/k8s/secret.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/backend/deployments/production/k8s/secret.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/deployments/staging/k8s/secret.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/secret.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker-compose.prod.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker-compose.prod.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker-compose.yml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/orchestra-infra/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/orchestra-infra/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/orchestra-workflow/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/orchestra-workflow/README.md" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -30,6 +33,11 @@
   </component>
   <component name="GOROOT" url="file://$USER_HOME$/Codelearning/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.4.linux-amd64" />
   <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="main" />
+      </map>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
     <option name="ROOT_SYNC" value="DONT_SYNC" />
   </component>
@@ -75,10 +83,10 @@
     "RunOnceActivity.go.formatter.settings.were.checked": "true",
     "RunOnceActivity.go.modules.go.list.on.any.changes.was.set": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "com.google.cloudcode.ide_session_index": "20260106_0002",
+    "com.google.cloudcode.ide_session_index": "20260116_0001",
     "git-widget-placeholder": "orchester",
     "go.sdk.automatically.set": "true",
-    "last_opened_file_path": "/home/r/sss/medi-drive/deploy/platform-workflows",
+    "last_opened_file_path": "/home/r/fff/deploy/orchestra",
     "node.js.detected.package.eslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
     "nodejs_package_manager_path": "npm"

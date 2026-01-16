@@ -67,8 +67,8 @@ nano .env
 ```env
 # Database
 DB_NAME=orchestra-db
-DB_USER=rsmrtk
-DB_PASSWORD=rsmrtk
+DB_USER=your_db_username
+DB_PASSWORD=your_secure_password
 DB_PORT=2828
 
 # Backend
@@ -79,7 +79,7 @@ GIN_MODE=release
 FRONTEND_PORT=5252
 
 # JWT
-JWT_SECRET=your-secret-here
+JWT_SECRET=your-secure-jwt-secret-min-32-chars
 JWT_DURATION=24h
 ```
 
@@ -127,7 +127,7 @@ docker compose up --build -d
 ### Підключитись до бази даних
 
 ```bash
-docker exec -it orchestra-db psql -U rsmrtk -d orchestra-db
+docker exec -it orchestra-db psql -U your_db_user -d orchestra-db
 ```
 
 ### Очистити все (включно з даними БД)

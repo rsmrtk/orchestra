@@ -208,11 +208,11 @@ ghcr.io/rsmrtk/orchestra/frontend:develop-xyz5678
 **Pull images:**
 ```bash
 # Login (перший раз)
-echo $GITHUB_TOKEN | docker login ghcr.io -u rsmrtk --password-stdin
+echo $GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
 
 # Pull
-docker pull ghcr.io/rsmrtk/orchestra/backend:latest
-docker pull ghcr.io/rsmrtk/orchestra/frontend:latest
+docker pull ghcr.io/YOUR_GITHUB_USERNAME/orchestra/backend:latest
+docker pull ghcr.io/YOUR_GITHUB_USERNAME/orchestra/frontend:latest
 ```
 
 ### Увімкнути Deploy
