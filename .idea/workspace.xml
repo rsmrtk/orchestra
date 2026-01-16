@@ -4,20 +4,7 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="72b24830-d696-4caa-bf87-68858609ace4" name="Changes" comment="reworking new deployments models">
-      <change beforePath="$PROJECT_DIR$/.env.prod" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/QUICK_START.md" beforeDir="false" afterPath="$PROJECT_DIR$/QUICK_START.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/deployments/production/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/backend/deployments/production/docker-compose.yml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/deployments/production/k8s/secret.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/backend/deployments/production/k8s/secret.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/deployments/staging/k8s/secret.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/secret.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker-compose.prod.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker-compose.prod.yml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker-compose.yml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/orchestra-infra/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/orchestra-infra/.gitignore" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/orchestra-workflow/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/orchestra-workflow/README.md" afterDir="false" />
-    </list>
+    <list default="true" id="72b24830-d696-4caa-bf87-68858609ace4" name="Changes" comment="reworking new deployments models" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
