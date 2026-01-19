@@ -4,7 +4,10 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="72b24830-d696-4caa-bf87-68858609ace4" name="Changes" comment="reworking new deployments models" />
+    <list default="true" id="72b24830-d696-4caa-bf87-68858609ace4" name="Changes" comment="reworking new deployments models">
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/LINK.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -70,7 +73,7 @@
     "RunOnceActivity.go.formatter.settings.were.checked": "true",
     "RunOnceActivity.go.modules.go.list.on.any.changes.was.set": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "com.google.cloudcode.ide_session_index": "20260116_0001",
+    "com.google.cloudcode.ide_session_index": "20260119_0004",
     "git-widget-placeholder": "orchester",
     "go.sdk.automatically.set": "true",
     "last_opened_file_path": "/home/r/fff/deploy/orchestra",
