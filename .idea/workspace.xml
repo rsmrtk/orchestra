@@ -5,8 +5,25 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="72b24830-d696-4caa-bf87-68858609ace4" name="Changes" comment="reworking new deployments models">
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/golang/DOCKERFILE_USAGE.en.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/golang/DOCKERFILE_USAGE.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/golang/DOCKERFILE_USAGE.ua.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/golang/Dockerfile" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/golang/Dockerfile.en" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/golang/Dockerfile.ua" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/javascript/DOCKERFILE_USAGE.en.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/javascript/DOCKERFILE_USAGE.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/javascript/DOCKERFILE_USAGE.ua.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/javascript/Dockerfile" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/javascript/Dockerfile.en" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/javascript/Dockerfile.ua" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/python/DOCKERFILE_USAGE.en.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/python/DOCKERFILE_USAGE.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/python/DOCKERFILE_USAGE.ua.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/python/Dockerfile" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/python/Dockerfile.en" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/dockerfiles/python/Dockerfile.ua" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/deployments/staging/k8s/LINK.md" beforeDir="false" afterPath="$PROJECT_DIR$/backend/deployments/staging/k8s/LINK.md" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -73,13 +90,14 @@
     "RunOnceActivity.go.formatter.settings.were.checked": "true",
     "RunOnceActivity.go.modules.go.list.on.any.changes.was.set": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "com.google.cloudcode.ide_session_index": "20260119_0005",
+    "com.google.cloudcode.ide_session_index": "20260123_0006",
     "git-widget-placeholder": "orchester",
     "go.sdk.automatically.set": "true",
     "last_opened_file_path": "/home/r/fff/deploy/orchestra",
     "node.js.detected.package.eslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm"
+    "nodejs_package_manager_path": "npm",
+    "settings.editor.selected.configurable": "reference.settingsdialog.IDE.editor.colors.YAML"
   }
 }]]></component>
   <component name="RecentsManager">
@@ -197,6 +215,8 @@
     <option name="version" value="3" />
   </component>
   <component name="UnknownFeatures">
+    <option featureType="dependencySupport" implementationName="javascript:npm:react" />
+    <option featureType="dependencySupport" implementationName="javascript:npm:vite" />
     <option featureType="com.intellij.fileTypeFactory" implementationName=".env" />
     <option featureType="com.intellij.fileTypeFactory" implementationName="default.conf" />
   </component>
