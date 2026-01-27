@@ -4,15 +4,16 @@ services:
     container_name: orchestra-db
     environment:
       POSTGRES_DB: ${DB_NAME:-orchestra-db}
-      POSTGRES_USER: ${DB_USER:-rsmrtk}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-rsmrtk}
+      # ВАЖЛИВО: Встановіть ці змінні у .env файлі!
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "${DB_PORT:-2828}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ../../pkg/dbmodel/db.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-rsmrtk} -d ${DB_NAME:-orchestra-db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME:-orchestra-db}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -32,11 +33,13 @@ services:
       GIN_MODE: ${GIN_MODE:-release}
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_USER: ${DB_USER:-rsmrtk}
-      DB_PASSWORD: ${DB_PASSWORD:-rsmrtk}
+      # ВАЖЛИВО: Встановіть ці змінні у .env файлі!
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME:-orchestra-db}
       PORT: 8282
-      JWT_SECRET: ${JWT_SECRET:-7mAqQ8xLqD5pXj3uQfL2HvT8sYcR0NwBvPeHgU4o}
+      # ВАЖЛИВО: Згенеруйте власний JWT_SECRET для продакшену!
+      JWT_SECRET: ${JWT_SECRET}
       JWT_DURATION: ${JWT_DURATION:-24h}
     restart: unless-stopped
     depends_on:
